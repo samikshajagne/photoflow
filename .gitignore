@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Runtime artifacts (created by the app, not part of the repo)
+logs/*.log
+logs/*.log.*
+data/cache.db
+
+# OS / editor cruft
+.DS_Store
+.vscode/
+.idea/

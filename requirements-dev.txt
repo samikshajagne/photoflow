@@ -1,0 +1,4 @@
+# Additional dependencies needed only to run the test suite.
+-r requirements.txt
+
+pytest>=7.4,<9.0

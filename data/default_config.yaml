@@ -1,0 +1,42 @@
+# PhotoFlow default configuration.
+#
+# This file is the single source of truth for tunable values. It is loaded
+# by utils/config.py and validated into typed dataclasses.
+#
+# Milestone 1 (this milestone) only *loads and validates* this file — no
+# component reads `thresholds`, `scoring_weights`, or `performance` yet.
+# Those sections are defined now so the schema is stable for the analysis
+# modules introduced in later milestones, and so the config system can be
+# fully tested today.
+
+io:
+  # File extensions PhotoFlow will consider when scanning a folder.
+  supported_extensions: [".jpg", ".jpeg", ".png", ".tif", ".tiff"]
+  # Name of the folder created inside the user's selected directory to
+  # hold BestShots / Duplicates / Blurry / Review.
+  output_folder_name: "PhotoFlow_Output"
+  # If true, files are copied into output folders (originals untouched).
+  # If false, files are moved. Copy is the safe default.
+  copy_not_move: true
+
+logging:
+  level: "INFO"            # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  log_dir: "logs"
+  max_bytes: 5242880        # 5 MB per log file before rotating
+  backup_count: 3           # number of rotated backups to keep
+
+# --- Not yet consumed by any code in Milestone 1 ---
+
+thresholds:
+  blur_score_min: 100.0               # min Laplacian-variance score to be "sharp"
+  duplicate_hash_distance_max: 5       # max Hamming distance to count as near-duplicate
+  face_detection_confidence_min: 0.5   # min MediaPipe detection confidence
+
+scoring_weights:
+  blur_weight: 0.5
+  face_weight: 0.3
+  exposure_weight: 0.2
+
+performance:
+  analysis_max_edge_px: 1024   # downsample target for analysis (not file output)
+  worker_pool_size: null        # null = auto-detect (cpu_count - 1) in later milestones
