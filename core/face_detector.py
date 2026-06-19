@@ -23,6 +23,7 @@ without the heavyweight model.
 from __future__ import annotations
 
 import dataclasses
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -56,9 +57,26 @@ DEFAULT_MIN_DETECTION_CONFIDENCE: float = 0.5
 # photos.
 DEFAULT_MODEL_SELECTION: int = 1
 
+# Tasks Vision API model, used when the legacy ``mediapipe.solutions`` module
+# is absent (e.g. mediapipe 0.10.x builds that ship only the Tasks API).
+_MODEL_FILENAME = "blaze_face_short_range.tflite"
+_MODEL_ENV_VAR = "PHOTOFLOW_FACE_MODEL"
+_BUNDLED_MODEL = Path(__file__).resolve().parent.parent / "data" / "models" / _MODEL_FILENAME
+_MODEL_DOWNLOAD_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_detector/"
+    "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite"
+)
+
 
 class FaceDetectionError(Exception):
     """Raised when face detection cannot proceed (bad input, missing backend)."""
+
+
+# A face bounding box as relative coordinates (xmin, ymin, width, height),
+# each in [0, 1] of the image's width/height. Relative coords keep regions
+# resolution-independent so downstream consumers (e.g. subject-aware
+# sharpness in the quality scorer) can map them onto any decode size.
+FaceBox = tuple[float, float, float, float]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -70,15 +88,106 @@ class FaceResult:
         image_path: The analyzed image's path, as a string.
         face_count: Number of faces detected (>= 0).
         faces_detected: ``True`` when ``face_count`` is greater than zero.
+        regions: Per-face bounding boxes as relative ``(xmin, ymin, width,
+            height)`` tuples in ``[0, 1]``. Empty when no faces were found (or
+            when a backend cannot supply boxes). Used by the quality scorer to
+            measure sharpness on the subject rather than the whole frame.
     """
 
     image_path: str
     face_count: int
     faces_detected: bool
+    regions: tuple[FaceBox, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """Return the compact ``{"face_count", "faces_detected"}`` form."""
         return {"face_count": self.face_count, "faces_detected": self.faces_detected}
+
+
+def _resolve_model_path(explicit: Optional[str]) -> Optional[Path]:
+    """Find the Tasks face-detector model in (in order): explicit arg, the
+    ``PHOTOFLOW_FACE_MODEL`` env var, the bundled ``data/models`` path, or the
+    user cache. Returns ``None`` if none exist."""
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(Path(explicit))
+    env = os.environ.get(_MODEL_ENV_VAR)
+    if env:
+        candidates.append(Path(env))
+    candidates.append(_BUNDLED_MODEL)
+    candidates.append(Path.home() / ".cache" / "photoflow" / _MODEL_FILENAME)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+class _SolutionsBackend:
+    """Adapter over the legacy ``mediapipe.solutions.face_detection`` API."""
+
+    def __init__(self, face_detection_mod: Any, model_selection: int, min_conf: float) -> None:
+        self._fd = face_detection_mod.FaceDetection(
+            model_selection=model_selection, min_detection_confidence=min_conf
+        )
+
+    def detect(self, rgb_image: np.ndarray) -> list[FaceBox]:
+        results = self._fd.process(rgb_image)
+        detections = getattr(results, "detections", None) or []
+        boxes: list[FaceBox] = []
+        for det in detections:
+            rbb = det.location_data.relative_bounding_box
+            boxes.append(
+                (float(rbb.xmin), float(rbb.ymin), float(rbb.width), float(rbb.height))
+            )
+        return boxes
+
+    def close(self) -> None:
+        try:
+            self._fd.close()
+        except Exception:  # pragma: no cover - best-effort cleanup
+            pass
+
+
+class _TasksBackend:
+    """Adapter over the Tasks Vision ``FaceDetector`` API (needs a model file)."""
+
+    def __init__(self, mp_module: Any, vision: Any, base_options_cls: Any,
+                 model_path: Path, min_conf: float) -> None:
+        options = vision.FaceDetectorOptions(
+            base_options=base_options_cls(model_asset_path=str(model_path)),
+            running_mode=vision.RunningMode.IMAGE,
+            min_detection_confidence=min_conf,
+        )
+        self._mp = mp_module
+        self._detector = vision.FaceDetector.create_from_options(options)
+
+    def detect(self, rgb_image: np.ndarray) -> list[FaceBox]:
+        image = self._mp.Image(
+            image_format=self._mp.ImageFormat.SRGB,
+            data=np.ascontiguousarray(rgb_image),
+        )
+        result = self._detector.detect(image)
+        detections = getattr(result, "detections", None) or []
+        height, width = rgb_image.shape[:2]
+        boxes: list[FaceBox] = []
+        for det in detections:
+            # Tasks API reports pixel coordinates; normalize to [0, 1].
+            bb = det.bounding_box
+            boxes.append(
+                (
+                    float(bb.origin_x) / width,
+                    float(bb.origin_y) / height,
+                    float(bb.width) / width,
+                    float(bb.height) / height,
+                )
+            )
+        return boxes
+
+    def close(self) -> None:
+        try:
+            self._detector.close()
+        except Exception:  # pragma: no cover - best-effort cleanup
+            pass
 
 
 class FaceDetector:
@@ -102,6 +211,7 @@ class FaceDetector:
         min_detection_confidence: float = DEFAULT_MIN_DETECTION_CONFIDENCE,
         supported_extensions: tuple[str, ...] = DEFAULT_SUPPORTED_EXTENSIONS,
         model_selection: int = DEFAULT_MODEL_SELECTION,
+        model_path: Optional[str] = None,
     ) -> None:
         if not 0.0 <= min_detection_confidence <= 1.0:
             raise FaceDetectionError(
@@ -122,6 +232,7 @@ class FaceDetector:
         self.min_detection_confidence = float(min_detection_confidence)
         self._extensions = frozenset(ext.lower() for ext in supported_extensions)
         self.model_selection = model_selection
+        self._model_path = model_path
         # Lazily created MediaPipe detector and a cached init error so a
         # missing/broken backend fails fast without retrying every image.
         self._detector: Optional[Any] = None
@@ -167,7 +278,8 @@ class FaceDetector:
             )
 
         rgb = self._load_rgb(path)
-        face_count = self._count_faces(rgb)
+        regions = tuple(self._detect_regions(rgb))
+        face_count = len(regions)
         faces_detected = face_count > 0
 
         logger.info(
@@ -180,6 +292,7 @@ class FaceDetector:
             image_path=str(path),
             face_count=face_count,
             faces_detected=faces_detected,
+            regions=regions,
         )
 
     def _load_rgb(self, path: Path) -> np.ndarray:
@@ -204,17 +317,19 @@ class FaceDetector:
             )
         return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
-    def _count_faces(self, rgb_image: np.ndarray) -> int:
+    def _detect_regions(self, rgb_image: np.ndarray) -> list[FaceBox]:
         """
-        Run MediaPipe on an RGB image and return the number of faces.
+        Run MediaPipe on an RGB image and return per-face bounding boxes.
 
         Isolated so it can be monkeypatched in tests and so the MediaPipe
-        import stays lazy.
+        import stays lazy. Boxes are relative ``(xmin, ymin, width, height)``.
         """
-        detector = self._get_detector()
-        results = detector.process(rgb_image)
-        detections = getattr(results, "detections", None)
-        return 0 if not detections else len(detections)
+        backend = self._get_detector()
+        return backend.detect(rgb_image)
+
+    def _count_faces(self, rgb_image: np.ndarray) -> int:
+        """Convenience wrapper: number of faces (length of detected regions)."""
+        return len(self._detect_regions(rgb_image))
 
     def _get_detector(self) -> Any:
         """Return a cached MediaPipe FaceDetection, creating it on first use."""
@@ -230,18 +345,52 @@ class FaceDetector:
         return self._detector
 
     def _create_detector(self) -> Any:
-        """Instantiate the MediaPipe FaceDetection solution."""
+        """
+        Build a face-detection backend compatible with the installed MediaPipe.
+
+        Prefers the legacy ``mediapipe.solutions.face_detection`` API where
+        present (standard installs). Where it is absent (e.g. mediapipe 0.10.x
+        Tasks-only builds, which is why every image was reporting 0 faces),
+        falls back to the Tasks Vision ``FaceDetector``, which requires a
+        model file resolved via :func:`_resolve_model_path`.
+        """
         try:
             import mediapipe as mp
-
-            face_detection = mp.solutions.face_detection
-        except (ImportError, AttributeError) as exc:
+        except ImportError as exc:
             raise FaceDetectionError(
-                "MediaPipe Face Detection backend is unavailable. Install a full "
-                "'mediapipe' build (pip install mediapipe) that provides "
-                "mediapipe.solutions.face_detection."
+                "MediaPipe is not installed (pip install mediapipe)."
             ) from exc
-        return face_detection.FaceDetection(
-            model_selection=self.model_selection,
-            min_detection_confidence=self.min_detection_confidence,
-        )
+
+        solutions = getattr(mp, "solutions", None)
+        face_detection_mod = getattr(solutions, "face_detection", None) if solutions else None
+        if face_detection_mod is not None:
+            return _SolutionsBackend(
+                face_detection_mod, self.model_selection, self.min_detection_confidence
+            )
+
+        # Tasks Vision fallback.
+        try:
+            from mediapipe.tasks.python import BaseOptions, vision
+        except ImportError as exc:
+            raise FaceDetectionError(
+                "MediaPipe face detection is unavailable: neither "
+                "mediapipe.solutions nor the Tasks Vision API could be imported."
+            ) from exc
+
+        model_path = _resolve_model_path(self._model_path)
+        if model_path is None:
+            raise FaceDetectionError(
+                "MediaPipe Tasks face-detector model not found. Provide "
+                f"'{_MODEL_FILENAME}' via the {_MODEL_ENV_VAR} environment "
+                f"variable, the bundled path '{_BUNDLED_MODEL}', or "
+                f"~/.cache/photoflow/. Download it from: {_MODEL_DOWNLOAD_URL}"
+            )
+        try:
+            return _TasksBackend(
+                mp, vision, BaseOptions, model_path, self.min_detection_confidence
+            )
+        except Exception as exc:  # noqa: BLE001 - surface any init failure clearly
+            raise FaceDetectionError(
+                f"Failed to initialize MediaPipe Tasks face detector "
+                f"with model '{model_path}': {exc}"
+            ) from exc

@@ -6,11 +6,15 @@ against synthesized images:
 
 - a sharp checkerboard (high Laplacian variance; unique content)
 - an exact byte copy of it (a duplicate)
-- a smooth gradient (low Laplacian variance -> blurry; content far from the
-  checkerboard so it is not a duplicate)
+- a smooth gradient (near-zero Laplacian variance -> clearly unusable; content
+  far from the checkerboard so it is not a duplicate)
 
-Expected routing: the copy -> Duplicates, the gradient -> Blurry, and the
-checkerboard (the group representative) -> Review.
+Expected routing under the redesigned pipeline: the copy -> Duplicates, the
+gradient -> Blurry (the conservative usability gate), and the checkerboard (the
+group representative) -> Review. BestShots is empty here: these synthetic
+images contain no faces, so none clears the BestShots quality floor (a
+face-less frame caps at the floor under the default weights). Face-driven
+BestShots selection is covered in test_pipeline_faces.py.
 """
 
 from pathlib import Path
@@ -19,7 +23,12 @@ import cv2
 import numpy as np
 import pytest
 
-from core.organizer import FOLDER_BLURRY, FOLDER_DUPLICATES, FOLDER_REVIEW
+from core.organizer import (
+    FOLDER_BEST_SHOTS,
+    FOLDER_BLURRY,
+    FOLDER_DUPLICATES,
+    FOLDER_REVIEW,
+)
 from core.pipeline import PhotoFlowPipeline, PipelineError, PipelineResult
 from utils.config import load_config
 
@@ -75,6 +84,7 @@ def test_end_to_end_routes_each_image(tmp_path: Path):
     assert result.duplicate_count == 1
     assert result.blurry_count == 1
     assert result.category_counts == {
+        FOLDER_BEST_SHOTS: 0,
         FOLDER_DUPLICATES: 1,
         FOLDER_BLURRY: 1,
         FOLDER_REVIEW: 1,
@@ -88,15 +98,19 @@ def test_end_to_end_writes_expected_files(tmp_path: Path):
     result = _pipeline().run(input_folder=src, destination_root=dest)
 
     output_root = Path(result.output_root)
+    best_names = {p.name for p in (output_root / FOLDER_BEST_SHOTS).iterdir()}
     dup_names = {p.name for p in (output_root / FOLDER_DUPLICATES).iterdir()}
     blurry_names = {p.name for p in (output_root / FOLDER_BLURRY).iterdir()}
     review_names = {p.name for p in (output_root / FOLDER_REVIEW).iterdir()}
 
+    # No faces -> nothing clears the BestShots floor. The duplicate copy goes
+    # to Duplicates, the unusable gradient to Blurry, and the group
+    # representative falls through to Review.
+    assert best_names == set()
     assert dup_names == {"b_copy.png"}
     assert blurry_names == {"z_blurry.png"}
     assert review_names == {"a_sharp.png"}
-    # BestShots is not produced yet.
-    assert not (output_root / "BestShots").exists()
+    assert (output_root / FOLDER_BEST_SHOTS).is_dir()
 
 
 def test_originals_are_preserved(tmp_path: Path):
@@ -131,6 +145,7 @@ def test_dry_run_reports_counts_without_copying(tmp_path: Path):
     assert result.output_root is None
     assert result.organization is None
     assert result.category_counts == {
+        FOLDER_BEST_SHOTS: 0,
         FOLDER_DUPLICATES: 1,
         FOLDER_BLURRY: 1,
         FOLDER_REVIEW: 1,
@@ -170,6 +185,7 @@ def test_empty_folder_produces_zero_counts(tmp_path: Path):
 
     assert result.scanned_count == 0
     assert result.category_counts == {
+        FOLDER_BEST_SHOTS: 0,
         FOLDER_DUPLICATES: 0,
         FOLDER_BLURRY: 0,
         FOLDER_REVIEW: 0,

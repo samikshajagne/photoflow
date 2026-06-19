@@ -1,35 +1,34 @@
 """
 Folder organization for PhotoFlow (Milestone 2).
 
-This module takes the outputs of the analysis stages — duplicate detection
-groups and per-image blur verdicts — together with the list of original
-photos, and lays out copies under a single output directory::
+This module takes the outputs of the analysis stages -- duplicate detection
+groups, per-image blur verdicts, and the quality-selected best shots --
+together with the list of original photos, and lays out copies under a
+single output directory::
 
     <destination>/PhotoFlow_Output/
-        ├── Duplicates/   redundant copies (members of a duplicate group)
-        ├── Blurry/       images flagged blurry that aren't duplicates
-        └── Review/       everything else (incl. group representatives)
-
-``BestShots/`` is intentionally NOT created here: best-shot selection
-depends on quality scoring, which is a later milestone. The folder name is
-reserved as a constant so it can be added without churn.
+        |-- BestShots/    the kept representative of each duplicate group
+        |-- Duplicates/   redundant copies (members of a duplicate group)
+        |-- Blurry/       images flagged blurry that aren't duplicates
+        \-- Review/       everything else
 
 Safety guarantees:
 - Originals are **copied**, never moved or deleted (``shutil.copy2``, which
   also preserves timestamps/metadata).
 - Filename collisions in a destination folder are resolved by suffixing
-  ``_1``, ``_2``, … so no copy ever overwrites another.
+  ``_1``, ``_2``, ... so no copy ever overwrites another.
 - Output folders are created automatically; all path handling goes through
   :mod:`pathlib` for cross-platform behavior.
 
 Classification precedence when a photo qualifies for more than one bucket:
-``Duplicates`` > ``Blurry`` > ``Review``. A photo listed as a duplicate is
-redundant regardless of sharpness, so it lands in ``Duplicates`` even if it
-is also blurry. Duplicate-group *representatives* are not duplicates and so
-fall through to ``Blurry`` (if flagged) or ``Review``.
+``BestShots`` > ``Duplicates`` > ``Blurry`` > ``Review``. A best shot is the
+representative chosen for a duplicate group (never itself a duplicate), and
+it is kept as the best shot even if it is also flagged blurry. A photo
+listed as a duplicate is redundant regardless of sharpness, so it lands in
+``Duplicates`` even if also blurry. Everything else falls through to
+``Blurry`` (if flagged) or ``Review``.
 
-Scope: organization only — no face detection, quality scoring, UI, or
-persistence.
+Scope: organization only -- no detection or scoring logic lives here.
 """
 
 from __future__ import annotations
@@ -38,7 +37,7 @@ import dataclasses
 import shutil
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, Union
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Optional, Union
 
 from core.blur_detector import BlurResult
 from utils.logger import get_logger
@@ -49,15 +48,18 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Destination subfolder names.
+FOLDER_BEST_SHOTS = "BestShots"
 FOLDER_DUPLICATES = "Duplicates"
 FOLDER_BLURRY = "Blurry"
 FOLDER_REVIEW = "Review"
-# Reserved for a later milestone (best-shot selection after quality scoring).
-# Deliberately NOT created by this module yet.
-FOLDER_BEST_SHOTS = "BestShots"
 
-# Subfolders this module creates on every run.
-_ACTIVE_FOLDERS: tuple[str, ...] = (FOLDER_DUPLICATES, FOLDER_BLURRY, FOLDER_REVIEW)
+# Subfolders this module creates on every run, in display/report order.
+_ACTIVE_FOLDERS: tuple[str, ...] = (
+    FOLDER_BEST_SHOTS,
+    FOLDER_DUPLICATES,
+    FOLDER_BLURRY,
+    FOLDER_REVIEW,
+)
 
 DEFAULT_OUTPUT_FOLDER_NAME = "PhotoFlow_Output"
 
@@ -131,7 +133,7 @@ class PhotoOrganizer:
 
         Reads ``io.output_folder_name``. Note that PhotoFlow always copies
         (never moves) for safety, so ``io.copy_not_move`` is not consulted
-        here — moving originals is intentionally unsupported.
+        here -- moving originals is intentionally unsupported.
         """
         return cls(output_folder_name=config.io.output_folder_name)
 
@@ -142,6 +144,7 @@ class PhotoOrganizer:
         duplicate_results: Mapping[str, Any],
         blur_results: Iterable[BlurResult],
         destination_root: PathLike,
+        best_shots: Optional[Iterable[PathLike]] = None,
     ) -> OrganizationResult:
         """
         Classify and copy each original photo into the output structure.
@@ -155,6 +158,9 @@ class PhotoOrganizer:
             blur_results: :class:`~core.blur_detector.BlurResult` objects;
                 those with ``is_blurry`` true mark their path as blurry.
             destination_root: Directory in which the output folder is created.
+            best_shots: Paths selected as the best shot of their duplicate
+                group; routed to ``BestShots`` with top precedence. When
+                omitted, no image is routed to ``BestShots``.
 
         Returns:
             An :class:`OrganizationResult` describing the copies made and any
@@ -165,6 +171,7 @@ class PhotoOrganizer:
                 folders cannot be created, or ``duplicate_results`` is
                 malformed.
         """
+        best_shot_paths = self._extract_best_shot_paths(best_shots)
         duplicate_paths = self._extract_duplicate_paths(duplicate_results)
         blurry_paths = self._extract_blurry_paths(blur_results)
 
@@ -182,7 +189,7 @@ class PhotoOrganizer:
                 skipped.append(str(source))
                 continue
 
-            category = self._classify(key, duplicate_paths, blurry_paths)
+            category = self._classify(key, best_shot_paths, duplicate_paths, blurry_paths)
             try:
                 destination = self._copy_into(source, output_root / category)
             except OSError as exc:
@@ -218,19 +225,22 @@ class PhotoOrganizer:
         original_paths: Iterable[PathLike],
         duplicate_results: Mapping[str, Any],
         blur_results: Iterable[BlurResult],
+        best_shots: Optional[Iterable[PathLike]] = None,
     ) -> list[tuple[Path, str]]:
         """
         Classify originals into categories **without copying anything**.
 
         Applies exactly the same precedence rules as :meth:`organize`
-        (Duplicates > Blurry > Review) but performs no filesystem writes,
-        making it suitable for a dry-run/preview. Missing or non-file paths
-        are silently omitted (they would be skipped by :meth:`organize`).
+        (BestShots > Duplicates > Blurry > Review) but performs no filesystem
+        writes, making it suitable for a dry-run/preview. Missing or non-file
+        paths are silently omitted (they would be skipped by
+        :meth:`organize`).
 
         Args:
             original_paths: Photos to classify.
             duplicate_results: ``DuplicateDetector.detect`` output.
             blur_results: :class:`~core.blur_detector.BlurResult` objects.
+            best_shots: Best-shot paths routed to ``BestShots``.
 
         Returns:
             A list of ``(source_path, category)`` tuples for existing files,
@@ -239,6 +249,7 @@ class PhotoOrganizer:
         Raises:
             OrganizationError: if ``duplicate_results`` is malformed.
         """
+        best_shot_paths = self._extract_best_shot_paths(best_shots)
         duplicate_paths = self._extract_duplicate_paths(duplicate_results)
         blurry_paths = self._extract_blurry_paths(blur_results)
 
@@ -247,18 +258,28 @@ class PhotoOrganizer:
             source = Path(raw)
             if not source.exists() or not source.is_file():
                 continue
-            category = self._classify(self._normalize(source), duplicate_paths, blurry_paths)
+            category = self._classify(
+                self._normalize(source), best_shot_paths, duplicate_paths, blurry_paths
+            )
             classified.append((source, category))
         return classified
 
     # ----------------------------------------------------------------- #
     # Input parsing
     # ----------------------------------------------------------------- #
+    def _extract_best_shot_paths(
+        self, best_shots: Optional[Iterable[PathLike]]
+    ) -> set[str]:
+        """Collect normalized paths of the best-shot images (may be empty)."""
+        if not best_shots:
+            return set()
+        return {self._normalize(Path(p)) for p in best_shots}
+
     def _extract_duplicate_paths(self, duplicate_results: Mapping[str, Any]) -> set[str]:
         """
         Collect normalized paths of every photo that is a *duplicate*.
 
-        Group representatives are deliberately excluded — they are the copy
+        Group representatives are deliberately excluded -- they are the copy
         to keep, not a redundant duplicate.
         """
         if "groups" not in duplicate_results:
@@ -320,7 +341,7 @@ class PhotoOrganizer:
         """
         Return a path in ``folder`` for ``filename`` that doesn't yet exist.
 
-        If ``filename`` is free it's used as-is; otherwise ``_1``, ``_2``, …
+        If ``filename`` is free it's used as-is; otherwise ``_1``, ``_2``, ...
         is inserted before the suffix until a free name is found.
         """
         candidate = folder / filename
@@ -341,10 +362,13 @@ class PhotoOrganizer:
     @staticmethod
     def _classify(
         normalized_path: str,
+        best_shot_paths: set[str],
         duplicate_paths: set[str],
         blurry_paths: set[str],
     ) -> str:
-        """Apply precedence Duplicates > Blurry > Review for one photo."""
+        """Apply precedence BestShots > Duplicates > Blurry > Review."""
+        if normalized_path in best_shot_paths:
+            return FOLDER_BEST_SHOTS
         if normalized_path in duplicate_paths:
             return FOLDER_DUPLICATES
         if normalized_path in blurry_paths:
@@ -357,7 +381,7 @@ class PhotoOrganizer:
         Canonicalize a path for reliable cross-source matching.
 
         ``resolve(strict=False)`` yields an absolute, normalized path without
-        requiring the file to exist, so duplicate/blur paths and original
-        paths compare equal regardless of how they were originally spelled.
+        requiring the file to exist, so duplicate/blur/best-shot paths and
+        original paths compare equal regardless of how they were spelled.
         """
         return str(path.resolve(strict=False))

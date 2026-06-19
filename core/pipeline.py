@@ -37,6 +37,7 @@ from core.blur_detector import BlurDetectionError, BlurDetector, BlurResult
 from core.duplicate_detector import DuplicateDetector
 from core.face_detector import FaceDetectionError, FaceDetector, FaceResult
 from core.organizer import (
+    FOLDER_BEST_SHOTS,
     FOLDER_BLURRY,
     FOLDER_DUPLICATES,
     FOLDER_REVIEW,
@@ -55,7 +56,27 @@ logger = get_logger(__name__)
 PathLike = Union[str, Path]
 
 # Category keys reported in counts, in display order.
-_REPORT_FOLDERS: tuple[str, ...] = (FOLDER_DUPLICATES, FOLDER_BLURRY, FOLDER_REVIEW)
+_REPORT_FOLDERS: tuple[str, ...] = (
+    FOLDER_BEST_SHOTS,
+    FOLDER_DUPLICATES,
+    FOLDER_BLURRY,
+    FOLDER_REVIEW,
+)
+
+# --- BestShots selection (threshold-driven, not quota-driven) ----------------
+# BestShots is drawn from the pool of *usable*, *deduplicated* photos (each
+# duplicate group contributes only its best member; unique photos compete on
+# equal footing). A photo is a BestShot iff its quality is at or above
+# ``BEST_SHOTS_QUALITY_FLOOR`` -- however many that is. There is deliberately
+# NO top-percentage and NO min/max cap: the quality score decides, so an
+# excellent shoot keeps all its excellent photos and a weak shoot is not padded
+# with mediocre ones to hit a quota.
+#
+# Because the floor is now the *only* gate, the bar is set a little higher (75)
+# than when a cap also constrained the set. Intended to be tuned on real
+# wedding datasets and made configurable later. A higher, well-tuned quality
+# score matters more now that nothing else limits the set.
+BEST_SHOTS_QUALITY_FLOOR: float = 75.0
 
 
 class PipelineError(Exception):
@@ -85,12 +106,11 @@ class PipelineResult:
         face_failures: Paths the face stage could not analyze (treated as no
             faces).
         quality_results: Per-image QualityResult scores.
-        best_shot_candidates: The quality-selected representative of each
-            duplicate group: the image PhotoFlow would keep as the best shot.
-            Selection now accounts for blur, brightness, contrast, and faces
-            (all via the quality score). Surfaced now so a future BestShots
-            folder can route these without further analysis; no folder is
-            created yet.
+        best_shot_candidates: The photos selected as BestShots for the whole
+            shoot: every usable, non-duplicate photo whose quality is at or
+            above ``BEST_SHOTS_QUALITY_FLOOR`` (no percentage, no cap), ordered
+            best-first. These are routed to the BestShots folder and are the
+            album source.
     """
 
     input_folder: str
@@ -189,30 +209,39 @@ class PhotoFlowPipeline:
         blur_results, blur_failures = self._run_blur(images)
         face_by_path, face_failures = self._run_faces(images)
 
-        quality_results, quality_by_path = self._run_quality(blur_results, face_by_path)
+        quality_results, quality_by_path, usable_by_path = self._run_quality(
+            blur_results, face_by_path
+        )
 
         # Re-pick each duplicate group's representative as its highest-quality
         # member. Duplicate *detection* is untouched (duplicate_detector still
         # decides membership); only the choice of which member to keep is
-        # refined here using quality (blur + exposure + faces).
+        # refined here using quality (subject sharpness + exposure + faces).
         ranked_results = self._rerank_representatives(duplicate_results, quality_by_path)
-        best_shot_candidates = tuple(
-            group["representative"]
-            for group in ranked_results["groups"]
-            if group["duplicates"]
+        duplicate_paths = self._duplicate_paths(ranked_results)
+
+        # BestShots is the top of the WHOLE shoot, not just duplicate keepers:
+        # rank the usable, deduplicated pool by quality and select the top slice.
+        best_shot_candidates = self._select_best_shots(
+            images, quality_by_path, usable_by_path, duplicate_paths
         )
 
-        duplicate_count = sum(
-            len(group["duplicates"]) for group in ranked_results["groups"]
-        )
-        blurry_count = sum(1 for r in blur_results if r.is_blurry)
+        # The Blurry bin now reflects the conservative usability gate (clearly
+        # unusable photos only), not the quality ranking. Synthesize the
+        # blur-result list the organizer consumes from that verdict so its
+        # precedence (BestShots > Duplicates > Blurry > Review) is preserved:
+        # a duplicate that is also unusable still lands in Duplicates.
+        usability_results = self._usability_blur_results(quality_results)
+
+        duplicate_count = len(duplicate_paths)
         faces_detected_count = sum(1 for r in face_by_path.values() if r.faces_detected)
 
         if dry_run:
             plan = self.organizer.plan(
                 original_paths=images,
                 duplicate_results=ranked_results,
-                blur_results=blur_results,
+                blur_results=usability_results,
+                best_shots=best_shot_candidates,
             )
             counts = self._counts_from_categories(category for _, category in plan)
             organization: Optional[OrganizationResult] = None
@@ -223,13 +252,16 @@ class PhotoFlowPipeline:
                 organization = self.organizer.organize(
                     original_paths=images,
                     duplicate_results=ranked_results,
-                    blur_results=blur_results,
+                    blur_results=usability_results,
                     destination_root=dest,
+                    best_shots=best_shot_candidates,
                 )
             except Exception as exc:
                 raise PipelineError(f"Pipeline failed during organization: {exc}") from exc
             counts = organization.category_counts()
             output_root = organization.output_root
+
+        blurry_count = counts[FOLDER_BLURRY]
 
         result = PipelineResult(
             input_folder=str(source),
@@ -294,34 +326,101 @@ class PhotoFlowPipeline:
         self,
         blur_results: list[BlurResult],
         face_by_path: dict[str, FaceResult],
-    ) -> tuple[list[QualityResult], dict[str, float]]:
+    ) -> tuple[list[QualityResult], dict[str, float], dict[str, bool]]:
         """
         Quality-score every successfully blur-analyzed image.
 
-        Reuses each image's blur score and face result (no re-analysis) and
-        returns both the list of results and a normalized-path -> score lookup
-        used for representative selection.
+        Reuses each image's blur score and face result (no re-analysis),
+        passing face regions through so sharpness is measured on the subject.
+        Returns the results plus two normalized-path lookups: one of quality
+        scores (for representative re-ranking and BestShots selection) and one
+        of usability verdicts (for routing the Blurry bin).
         """
         results: list[QualityResult] = []
         by_path: dict[str, float] = {}
+        usable_by_path: dict[str, bool] = {}
         for blur in blur_results:
             key = self._normalize(blur.path)
             face = face_by_path.get(key)
             faces_detected = bool(face.faces_detected) if face is not None else False
             face_count = int(face.face_count) if face is not None else 0
+            face_regions = tuple(face.regions) if face is not None else ()
             try:
                 quality = self.quality_scorer.score(
                     blur.path,
                     blur.blur_score,
                     faces_detected=faces_detected,
                     face_count=face_count,
+                    face_regions=face_regions,
                 )
             except QualityScoringError as exc:
                 logger.warning("Quality scoring failed for '%s': %s", blur.path, exc)
                 continue
             results.append(quality)
-            by_path[self._normalize(quality.image_path)] = quality.quality_score
-        return results, by_path
+            norm = self._normalize(quality.image_path)
+            by_path[norm] = quality.quality_score
+            usable_by_path[norm] = quality.usable
+        return results, by_path, usable_by_path
+
+    def _duplicate_paths(self, ranked_results: dict) -> set[str]:
+        """Normalized paths of every non-representative duplicate member."""
+        paths: set[str] = set()
+        for group in ranked_results["groups"]:
+            for dup in group["duplicates"]:
+                paths.add(self._normalize(dup))
+        return paths
+
+    def _select_best_shots(
+        self,
+        images: list[Path],
+        quality_by_path: dict[str, float],
+        usable_by_path: dict[str, bool],
+        duplicate_paths: set[str],
+    ) -> tuple[str, ...]:
+        """
+        Select BestShots from the whole shoot, threshold-driven.
+
+        Candidate pool = scanned photos that are usable and are not
+        non-representative duplicates (so each duplicate group contributes only
+        its kept member, and unique photos are eligible). Every candidate whose
+        quality is at or above ``BEST_SHOTS_QUALITY_FLOOR`` is selected -- no
+        percentage and no min/max cap. The result is ordered best-first (ties
+        broken by path) for deterministic, display-friendly output. Returns
+        original path strings.
+        """
+        selected: list[tuple[float, str]] = []
+        for img in images:
+            norm = self._normalize(img)
+            if norm in duplicate_paths:
+                continue
+            if not usable_by_path.get(norm, False):
+                continue
+            score = quality_by_path.get(norm)
+            if score is None or score < BEST_SHOTS_QUALITY_FLOOR:
+                continue
+            selected.append((score, str(img)))
+
+        # Highest quality first; ties broken by path for deterministic output.
+        selected.sort(key=lambda item: (-item[0], item[1]))
+        return tuple(path for _, path in selected)
+
+    def _usability_blur_results(
+        self, quality_results: list[QualityResult]
+    ) -> list[BlurResult]:
+        """
+        Translate usability verdicts into the BlurResult list the organizer
+        consumes, where ``is_blurry`` means "clearly unusable". Images without
+        a quality result (e.g. decode failures) are intentionally omitted so
+        they fall through to Review rather than the Blurry bin.
+        """
+        return [
+            BlurResult(
+                path=q.image_path,
+                blur_score=q.sharpness,
+                is_blurry=not q.usable,
+            )
+            for q in quality_results
+        ]
 
     def _rerank_representatives(
         self, duplicate_results: dict, quality_by_path: dict[str, float]

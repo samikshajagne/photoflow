@@ -1,0 +1,69 @@
+/* PhotoFlow dark theme - graphite, Lightroom/Photoshop-like. */
+
+QMainWindow, QWidget {
+    background-color: #1e1f22;
+    color: #dcdde0;
+    font-size: 13px;
+}
+
+QToolBar {
+    background-color: #252629;
+    border: none;
+    padding: 6px;
+    spacing: 6px;
+}
+
+QToolBar QToolButton {
+    color: #dcdde0;
+    background: transparent;
+    padding: 6px 12px;
+    border-radius: 6px;
+}
+QToolBar QToolButton:hover { background-color: #34363b; }
+QToolBar QToolButton:pressed { background-color: #3a82f6; color: #ffffff; }
+QToolBar QToolButton:disabled { color: #5a5c62; }
+
+QStatusBar {
+    background-color: #252629;
+    color: #96989e;
+    border-top: 1px solid #34363b;
+}
+
+QSplitter::handle { background-color: #2b2d31; }
+QSplitter::handle:horizontal { width: 2px; }
+
+#Sidebar, #MetadataPanel {
+    background-color: #242529;
+    border: none;
+}
+
+#PanelHeading {
+    color: #96989e;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    padding: 10px 12px 4px 12px;
+}
+
+QListWidget#CategoryList {
+    background-color: #242529;
+    border: none;
+    outline: 0;
+    padding: 4px 6px;
+}
+QListWidget#CategoryList::item {
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin: 2px 4px;
+}
+QListWidget#CategoryList::item:selected { background-color: #3a82f6; color: #ffffff; }
+QListWidget#CategoryList::item:hover:!selected { background-color: #34363b; }
+
+#CenterPlaceholder {
+    color: #7d7f86;
+    font-size: 15px;
+}
+
+#MetaKey { color: #96989e; }
+#MetaValue { color: #dcdde0; font-weight: 600; }
+#MetaSeparator { color: #34363b; }

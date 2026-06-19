@@ -4,8 +4,9 @@ Unit tests for core.face_detector.
 The real MediaPipe model is heavyweight and may be unavailable in some
 environments, so the wrapper's own responsibilities -- path/extension
 validation, image loading, result shaping, error handling -- are tested by
-monkeypatching the isolated ``_count_faces`` method. A guarded test exercises
-the real backend only when MediaPipe's solutions API is present.
+monkeypatching the isolated ``_detect_regions`` method (which returns per-face
+bounding boxes; ``face_count`` is its length). A guarded test exercises the
+real backend only when MediaPipe's solutions API is present.
 """
 
 from pathlib import Path
@@ -40,11 +41,16 @@ def _write_image(path: Path, ext: str = ".png") -> Path:
     return path
 
 
+def _fake_regions(n: int):
+    """Return a backend-style detector that reports ``n`` face boxes."""
+    return lambda self, img: [(0.1, 0.1, 0.2, 0.2) for _ in range(n)]
+
+
 # --------------------------------------------------------------------------- #
 # Result shaping (via monkeypatched detection)
 # --------------------------------------------------------------------------- #
 def test_faces_detected_true_when_count_positive(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(FaceDetector, "_count_faces", lambda self, img: 2)
+    monkeypatch.setattr(FaceDetector, "_detect_regions", _fake_regions(2))
     path = _write_image(tmp_path / "people.png")
 
     result = FaceDetector().detect(path)
@@ -53,16 +59,18 @@ def test_faces_detected_true_when_count_positive(tmp_path: Path, monkeypatch):
     assert result.face_count == 2
     assert result.faces_detected is True
     assert result.image_path == str(path)
+    assert len(result.regions) == 2
 
 
 def test_no_faces_when_count_zero(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(FaceDetector, "_count_faces", lambda self, img: 0)
+    monkeypatch.setattr(FaceDetector, "_detect_regions", _fake_regions(0))
     path = _write_image(tmp_path / "landscape.png")
 
     result = FaceDetector().detect(path)
 
     assert result.face_count == 0
     assert result.faces_detected is False
+    assert result.regions == ()
 
 
 def test_as_dict_matches_spec_shape():
@@ -72,7 +80,7 @@ def test_as_dict_matches_spec_shape():
 
 @pytest.mark.parametrize("ext", [".jpg", ".jpeg", ".png", ".bmp", ".tiff"])
 def test_supported_formats_are_accepted(tmp_path: Path, monkeypatch, ext: str):
-    monkeypatch.setattr(FaceDetector, "_count_faces", lambda self, img: 1)
+    monkeypatch.setattr(FaceDetector, "_detect_regions", _fake_regions(1))
     path = _write_image(tmp_path / f"img{ext}", ext)
 
     result = FaceDetector().detect(path)
@@ -81,7 +89,7 @@ def test_supported_formats_are_accepted(tmp_path: Path, monkeypatch, ext: str):
 
 
 def test_extension_match_is_case_insensitive(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(FaceDetector, "_count_faces", lambda self, img: 0)
+    monkeypatch.setattr(FaceDetector, "_detect_regions", _fake_regions(0))
     path = _write_image(tmp_path / "IMG.PNG")
 
     result = FaceDetector().detect(path)

@@ -22,7 +22,12 @@ import pytest
 from core.blur_detector import BlurDetector
 from core.duplicate_detector import DuplicateDetector
 from core.face_detector import FaceDetectionError, FaceResult
-from core.organizer import FOLDER_DUPLICATES, FOLDER_REVIEW, PhotoOrganizer
+from core.organizer import (
+    FOLDER_BEST_SHOTS,
+    FOLDER_DUPLICATES,
+    FOLDER_REVIEW,
+    PhotoOrganizer,
+)
 from core.pipeline import PhotoFlowPipeline
 from core.quality_scorer import QualityScorer
 from core.scanner import ImageScanner
@@ -110,10 +115,26 @@ def test_best_shot_prefers_the_image_with_a_face(tmp_path: Path):
     assert result.best_shot_candidates[0].endswith("b_second.png")
 
     output_root = Path(result.output_root)
-    review = {p.name for p in (output_root / FOLDER_REVIEW).iterdir()}
+    best = {p.name for p in (output_root / FOLDER_BEST_SHOTS).iterdir()}
     duplicates = {p.name for p in (output_root / FOLDER_DUPLICATES).iterdir()}
-    assert review == {"b_second.png"}
+    # The face-bearing copy is kept as the best shot; the other is a duplicate.
+    assert best == {"b_second.png"}
     assert duplicates == {"a_first.png"}
+
+
+def test_unique_high_quality_image_with_face_reaches_best_shots(tmp_path: Path):
+    # A single UNIQUE image (no duplicates) with a face and strong quality must
+    # be eligible for BestShots under the redesign (Goal 4).
+    src = _one_image(tmp_path, "solo.png")
+
+    result = _pipeline(FakeFaceDetector(face_for=lambda p: 1)).run(
+        input_folder=src, destination_root=tmp_path / "out"
+    )
+
+    assert len(result.best_shot_candidates) == 1
+    assert result.best_shot_candidates[0].endswith("solo.png")
+    best = {p.name for p in (Path(result.output_root) / FOLDER_BEST_SHOTS).iterdir()}
+    assert best == {"solo.png"}
 
 
 def test_face_stage_failure_is_nonfatal(tmp_path: Path):

@@ -197,3 +197,92 @@ def test_score_corrupt_image_raises(tmp_path: Path):
 
     with pytest.raises(QualityScoringError):
         QualityScorer().score(bad, blur_score=1.0)
+
+
+# --------------------------------------------------------------------------- #
+# Subject-aware sharpness
+# --------------------------------------------------------------------------- #
+def _checkerboard(size: int = 128, square: int = 8) -> np.ndarray:
+    rows = []
+    for r in range(size // square):
+        row = [(0 if (r + c) % 2 else 255) for c in range(size // square)]
+        rows.append(np.repeat(row, square))
+    return np.repeat(np.array(rows, dtype=np.uint8), square, axis=0)[:size, :size]
+
+
+def test_subject_aware_sharpness_measures_the_face_region(tmp_path: Path):
+    # A mostly-flat (soft) frame with a sharp checkerboard patch in the top-left
+    # corner -- like a tack-sharp face against a bokeh background.
+    frame = np.full((100, 100), 128, dtype=np.uint8)
+    frame[0:20, 0:20] = _checkerboard(size=20, square=2)
+    path = tmp_path / "bokeh.png"
+    cv2.imwrite(str(path), frame)
+
+    scorer = QualityScorer()
+    # Whole-frame blur score is low (soft frame); the face box covers the patch.
+    no_region = scorer.score(path, blur_score=5.0)
+    with_region = scorer.score(
+        path,
+        blur_score=5.0,
+        faces_detected=True,
+        face_count=1,
+        face_regions=[(0.0, 0.0, 0.2, 0.2)],
+    )
+
+    # Sharpness (and thus quality) is taken from the sharp face region, not the
+    # soft whole frame.
+    assert with_region.sharpness > no_region.sharpness
+    assert with_region.quality_score > no_region.quality_score
+
+
+def test_degenerate_face_region_falls_back_to_global(tmp_path: Path):
+    path = _save_gray(tmp_path / "mid.png", 128)
+    scorer = QualityScorer()
+    # A zero-size box yields no usable crop -> fall back to the global blur score.
+    result = scorer.score(
+        path, blur_score=5000.0, faces_detected=True, face_regions=[(0.5, 0.5, 0.0, 0.0)]
+    )
+    assert result.sharpness == 5000.0
+
+
+# --------------------------------------------------------------------------- #
+# Usability gate (independent of the quality ranking)
+# --------------------------------------------------------------------------- #
+def test_normal_image_is_usable(tmp_path: Path):
+    path = _save_gray(tmp_path / "ok.png", 128)
+    result = QualityScorer().score(path, blur_score=5000.0)
+    assert result.usable is True
+
+
+def test_severely_blurred_image_is_unusable(tmp_path: Path):
+    # Flat field -> Laplacian variance ~0, far below the sharpness floor.
+    path = _save_gray(tmp_path / "soft.png", 128)
+    result = QualityScorer().score(path, blur_score=1.0)
+    assert result.usable is False
+
+
+def test_near_black_image_is_unusable(tmp_path: Path):
+    # Low-amplitude checkerboard: textured (passes the sharpness floor) but
+    # almost black (mean ~10), so it fails the brightness floor.
+    frame = np.where(_checkerboard() > 0, 20, 0).astype(np.uint8)
+    path = tmp_path / "dark.png"
+    cv2.imwrite(str(path), frame)
+    result = QualityScorer().score(path, blur_score=5000.0)
+    assert result.brightness < 12.0
+    assert result.usable is False
+
+
+def test_blown_out_image_is_unusable(tmp_path: Path):
+    frame = np.where(_checkerboard() > 0, 255, 235).astype(np.uint8)
+    path = tmp_path / "blown.png"
+    cv2.imwrite(str(path), frame)
+    result = QualityScorer().score(path, blur_score=5000.0)
+    assert result.brightness > 243.0
+    assert result.usable is False
+
+
+def test_usability_bounds_validation():
+    with pytest.raises(QualityScoringError):
+        QualityScorer(usable_sharpness_min=-1.0)
+    with pytest.raises(QualityScoringError):
+        QualityScorer(usable_brightness_min=200.0, usable_brightness_max=100.0)

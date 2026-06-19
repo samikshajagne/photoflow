@@ -58,7 +58,7 @@ def _names_in(folder: Path) -> set[str]:
 # --------------------------------------------------------------------------- #
 # Folder structure
 # --------------------------------------------------------------------------- #
-def test_creates_active_folders_but_not_bestshots(tmp_path: Path):
+def test_creates_all_four_active_folders(tmp_path: Path):
     src = tmp_path / "src"
     dest = tmp_path / "dest"
     photo = _make_photo(src / "a.jpg")
@@ -72,11 +72,10 @@ def test_creates_active_folders_but_not_bestshots(tmp_path: Path):
 
     output_root = Path(result.output_root)
     assert output_root.name == "PhotoFlow_Output"
+    assert (output_root / FOLDER_BEST_SHOTS).is_dir()
     assert (output_root / FOLDER_DUPLICATES).is_dir()
     assert (output_root / FOLDER_BLURRY).is_dir()
     assert (output_root / FOLDER_REVIEW).is_dir()
-    # BestShots must NOT be created yet.
-    assert not (output_root / FOLDER_BEST_SHOTS).exists()
 
 
 def test_empty_input_just_creates_folders(tmp_path: Path):
@@ -90,6 +89,7 @@ def test_empty_input_just_creates_folders(tmp_path: Path):
     assert result.operations == ()
     assert result.skipped == ()
     assert result.category_counts() == {
+        FOLDER_BEST_SHOTS: 0,
         FOLDER_DUPLICATES: 0,
         FOLDER_BLURRY: 0,
         FOLDER_REVIEW: 0,
@@ -320,3 +320,100 @@ def test_from_config_uses_output_folder_name(tmp_path: Path):
         destination_root=tmp_path / "dest",
     )
     assert Path(result.output_root).name == config.io.output_folder_name
+
+
+# --------------------------------------------------------------------------- #
+# BestShots routing
+# --------------------------------------------------------------------------- #
+def test_best_shot_goes_to_bestshots(tmp_path: Path):
+    rep = _make_photo(tmp_path / "src" / "keep.jpg")
+    dup = _make_photo(tmp_path / "src" / "copy.jpg")
+    dest = tmp_path / "dest"
+
+    result = PhotoOrganizer().organize(
+        original_paths=[rep, dup],
+        duplicate_results=_dup_results(representative=str(rep), duplicates=[str(dup)]),
+        blur_results=[],
+        destination_root=dest,
+        best_shots=[str(rep)],
+    )
+
+    output_root = Path(result.output_root)
+    assert _names_in(output_root / FOLDER_BEST_SHOTS) == {"keep.jpg"}
+    assert _names_in(output_root / FOLDER_DUPLICATES) == {"copy.jpg"}
+    assert _names_in(output_root / FOLDER_REVIEW) == set()
+
+
+def test_best_shot_takes_precedence_over_blurry(tmp_path: Path):
+    rep = _make_photo(tmp_path / "src" / "keep.jpg")
+    dup = _make_photo(tmp_path / "src" / "copy.jpg")
+    dest = tmp_path / "dest"
+
+    # The best shot is also flagged blurry; precedence keeps it in BestShots.
+    result = PhotoOrganizer().organize(
+        original_paths=[rep, dup],
+        duplicate_results=_dup_results(representative=str(rep), duplicates=[str(dup)]),
+        blur_results=[_blur(rep, True)],
+        destination_root=dest,
+        best_shots=[str(rep)],
+    )
+
+    output_root = Path(result.output_root)
+    assert _names_in(output_root / FOLDER_BEST_SHOTS) == {"keep.jpg"}
+    assert _names_in(output_root / FOLDER_BLURRY) == set()
+
+
+def test_without_best_shots_representative_stays_in_review(tmp_path: Path):
+    # Backward compatibility: when no best_shots are passed, the representative
+    # falls through to Review as before.
+    rep = _make_photo(tmp_path / "src" / "keep.jpg")
+    dup = _make_photo(tmp_path / "src" / "copy.jpg")
+    dest = tmp_path / "dest"
+
+    result = PhotoOrganizer().organize(
+        original_paths=[rep, dup],
+        duplicate_results=_dup_results(representative=str(rep), duplicates=[str(dup)]),
+        blur_results=[],
+        destination_root=dest,
+    )
+
+    output_root = Path(result.output_root)
+    assert _names_in(output_root / FOLDER_BEST_SHOTS) == set()
+    assert _names_in(output_root / FOLDER_REVIEW) == {"keep.jpg"}
+
+
+def test_bestshots_filename_collision_is_resolved(tmp_path: Path):
+    # Two best shots from different source folders share a basename.
+    a = _make_photo(tmp_path / "g1" / "best.jpg", content=b"one")
+    b = _make_photo(tmp_path / "g2" / "best.jpg", content=b"two")
+    dest = tmp_path / "dest"
+
+    result = PhotoOrganizer().organize(
+        original_paths=[a, b],
+        duplicate_results=_dup_results(),
+        blur_results=[],
+        destination_root=dest,
+        best_shots=[str(a), str(b)],
+    )
+
+    best = Path(result.output_root) / FOLDER_BEST_SHOTS
+    names = _names_in(best)
+    assert names == {"best.jpg", "best_1.jpg"}
+    contents = {(best / n).read_bytes() for n in names}
+    assert contents == {b"one", b"two"}
+
+
+def test_plan_routes_best_shots(tmp_path: Path):
+    rep = _make_photo(tmp_path / "src" / "keep.jpg")
+    dup = _make_photo(tmp_path / "src" / "copy.jpg")
+
+    plan = PhotoOrganizer().plan(
+        original_paths=[rep, dup],
+        duplicate_results=_dup_results(representative=str(rep), duplicates=[str(dup)]),
+        blur_results=[],
+        best_shots=[str(rep)],
+    )
+
+    by_name = {Path(p).name: cat for p, cat in plan}
+    assert by_name["keep.jpg"] == FOLDER_BEST_SHOTS
+    assert by_name["copy.jpg"] == FOLDER_DUPLICATES

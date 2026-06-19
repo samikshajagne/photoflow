@@ -1,14 +1,14 @@
 # PhotoFlow runtime dependencies.
 #
-# MediaPipe and Streamlit are part of PhotoFlow's overall tech stack but are
-# NOT installed yet — they're added to this file as each milestone introduces
-# the code that depends on them (remaining Milestone 2 analysis: MediaPipe;
-# Milestone 3: Streamlit).
-#
-# Pillow and ImageHash are required by core/duplicate_detector.py for image
-# loading and perceptual hashing. OpenCV and NumPy are required by
-# core/blur_detector.py for Variance-of-Laplacian blur scoring. The headless
-# OpenCV build is used because PhotoFlow needs no GUI windowing.
+# - PyYAML: config loading (utils/config.py).
+# - Pillow + ImageHash: image loading and perceptual hashing
+#   (core/duplicate_detector.py).
+# - OpenCV (headless) + NumPy: blur (Variance-of-Laplacian), brightness/
+#   contrast, and face image loading (core/blur_detector.py,
+#   core/quality_scorer.py, core/face_detector.py). Headless because
+#   PhotoFlow needs no GUI windowing.
+# - MediaPipe: face detection (core/face_detector.py).
+# - Streamlit: the desktop UI (ui/app.py).
 
 PyYAML>=6.0,<7.0
 Pillow>=10.0,<13.0
@@ -16,3 +16,5 @@ ImageHash>=4.3,<5.0
 opencv-python-headless>=4.8,<5.0
 numpy>=1.24,<3.0
 mediapipe>=0.10,<0.11
+streamlit>=1.30,<2.0
+PyQt6>=6.5,<7.0
