@@ -1,4 +1,7 @@
-# Additional dependencies needed only to run the test suite.
+# Additional dependencies needed for development: tests, linting, type-checking.
 -r requirements.txt
 
 pytest>=7.4,<9.0
+pytest-cov>=4.1,<6.0
+ruff>=0.5,<1.0
+mypy>=1.8,<2.0

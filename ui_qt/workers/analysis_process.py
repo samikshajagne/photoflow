@@ -62,13 +62,33 @@ def run_pipeline_to_queue(input_folder: str, output_folder: str, queue: Any) -> 
         # Imported lazily so importing this module stays cheap.
         from core.pipeline import PhotoFlowPipeline
         from utils.config import load_config
+        from persistence.analysis_cache import AnalysisCache
+        from core.album.analysis_records import album_cache_path, records_from_result
+
+        # A shared analysis cache keyed to the source folder. Populating it here
+        # means a later "Generate Album" reuses this pass (quality records +
+        # face detections) instead of re-running the whole pipeline.
+        cache = AnalysisCache(album_cache_path(input_folder))
 
         pipeline = PhotoFlowPipeline.from_config(load_config())
         result = pipeline.run(
             input_folder=input_folder,
             destination_root=output_folder,
             dry_run=False,
+            cache=cache,
         )
+
+        # Persist the classified inventory so album generation can skip
+        # re-analysis. Non-fatal: a cache-write failure must not fail analysis.
+        try:
+            for rec in records_from_result(result):
+                cache.put("quality", rec.source_path, rec.to_dict())
+            cache.save()
+        except Exception as cache_exc:  # noqa: BLE001
+            logging.getLogger(_PHOTOFLOW_LOGGER).warning(
+                "Analysis cache write failed (album will re-analyze): %s", cache_exc
+            )
+
         queue.put(("result", result))
     except Exception as exc:  # noqa: BLE001 - report everything to the parent
         queue.put(("error", f"{exc.__class__.__name__}: {exc}\n{traceback.format_exc()}"))

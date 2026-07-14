@@ -211,3 +211,47 @@ def test_component_injection_is_used(tmp_path: Path):
     result = pipeline.run(input_folder=src, destination_root=tmp_path / "out")
 
     assert result.scanned_count == 3
+
+
+# --------------------------------------------------------------------------- #
+# Parallelism + empty/unreadable handling
+# --------------------------------------------------------------------------- #
+def test_parallel_run_matches_sequential(tmp_path: Path):
+    src = _build_sample_folder(tmp_path)
+
+    seq = _pipeline()
+    seq.max_workers = 1
+    par = _pipeline()
+    par.max_workers = 4
+
+    r_seq = seq.run(input_folder=src, destination_root=tmp_path / "out_seq")
+    r_par = par.run(input_folder=src, destination_root=tmp_path / "out_par")
+
+    # Parallel execution must be deterministic and identical to sequential.
+    assert r_par.category_counts == r_seq.category_counts
+    assert r_par.best_shot_candidates == r_seq.best_shot_candidates
+    assert r_par.duplicate_paths == r_seq.duplicate_paths
+    assert r_par.scanned_count == r_seq.scanned_count == 3
+
+
+def test_all_unreadable_flag_when_no_image_decodes(tmp_path: Path):
+    src = tmp_path / "photos"
+    src.mkdir()
+    # Files with image extensions that are not decodable images.
+    (src / "a.png").write_bytes(b"not an image")
+    (src / "b.jpg").write_bytes(b"also not an image")
+
+    result = _pipeline().run(input_folder=src, destination_root=tmp_path / "out")
+
+    assert result.scanned_count == 2
+    assert result.all_unreadable is True
+
+
+def test_empty_folder_is_not_flagged_unreadable(tmp_path: Path):
+    src = tmp_path / "empty"
+    src.mkdir()
+
+    result = _pipeline().run(input_folder=src, destination_root=tmp_path / "out")
+
+    assert result.scanned_count == 0
+    assert result.all_unreadable is False

@@ -115,9 +115,11 @@ def test_controller_runs_in_subprocess_and_emits_result(qapp, tmp_path: Path):
     controller = AnalysisController()
     captured = {}
     progress = []
+    stopped_emitted = []
     controller.finished.connect(lambda r: captured.setdefault("result", r))
     controller.failed.connect(lambda m: captured.setdefault("error", m))
     controller.progress.connect(progress.append)
+    controller.stopped.connect(lambda: stopped_emitted.append(True))
 
     controller.start(str(photos), str(tmp_path / "out"))
     ok = _spin_until(qapp, lambda: "result" in captured or "error" in captured)
@@ -132,6 +134,7 @@ def test_controller_runs_in_subprocess_and_emits_result(qapp, tmp_path: Path):
     assert len(progress) > 0
     # Let the waiter thread fully wind down.
     _spin_until(qapp, lambda: not controller.is_running(), timeout_s=10)
+    assert len(stopped_emitted) == 1
 
 
 def test_cancel_when_idle_is_safe(qapp):

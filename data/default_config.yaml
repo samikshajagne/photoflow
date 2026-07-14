@@ -31,6 +31,9 @@ thresholds:
   blur_score_min: 100.0               # min Laplacian-variance score to be "sharp"
   duplicate_hash_distance_max: 5       # max Hamming distance to count as near-duplicate
   face_detection_confidence_min: 0.5   # min MediaPipe detection confidence
+  face_model_path: null                # explicit path to blaze_face_short_range.tflite;
+                                       # null = use bundled data/models/ file or
+                                       # PHOTOFLOW_FACE_MODEL env var
 
 scoring_weights:
   blur_weight: 0.5

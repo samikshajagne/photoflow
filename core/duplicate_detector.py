@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Iterable, Optional, Union
 
 import imagehash
 from PIL import Image, UnidentifiedImageError
@@ -60,6 +60,7 @@ DEFAULT_SUPPORTED_EXTENSIONS: tuple[str, ...] = (
     ".jpeg",
     ".png",
     ".bmp",
+    ".tif",
     ".tiff",
 )
 
@@ -157,13 +158,22 @@ class DuplicateDetector:
             supported_extensions=config.io.supported_extensions,
         )
 
-    def detect(self, folder: Union[str, Path]) -> dict[str, list[dict[str, object]]]:
+    def detect(
+        self,
+        folder: Union[str, Path],
+        image_paths: Optional[Iterable[Union[str, Path]]] = None,
+    ) -> dict[str, list[dict[str, object]]]:
         """
-        Scan ``folder`` recursively and group duplicate/near-duplicate images.
+        Group duplicate/near-duplicate images.
 
         Args:
-            folder: Root directory to scan. All supported image files in it
-                and its subdirectories are considered.
+            folder: Root directory the images came from (used for validation
+                and logging).
+            image_paths: Optional pre-enumerated image files to consider. When
+                provided (e.g. the pipeline's single authoritative scan), the
+                folder is **not** re-walked, avoiding a second directory scan
+                and keeping the file set identical to the rest of the pipeline.
+                When ``None``, ``folder`` is scanned recursively as before.
 
         Returns:
             A dictionary of the form::
@@ -184,9 +194,14 @@ class DuplicateDetector:
         if not root.is_dir():
             raise DuplicateDetectionError(f"Path is not a directory: {root}")
 
-        logger.info("Scanning '%s' for duplicate images.", root)
-        image_paths = self._scan_folder(root)
-        logger.info("Found %d candidate image file(s).", len(image_paths))
+        if image_paths is not None:
+            paths = [Path(p) for p in image_paths]
+            logger.info("Using %d pre-scanned image file(s) from '%s'.", len(paths), root)
+        else:
+            logger.info("Scanning '%s' for duplicate images.", root)
+            paths = self._scan_folder(root)
+            logger.info("Found %d candidate image file(s).", len(paths))
+        image_paths = paths
 
         hashed = self._hash_images(image_paths)
         logger.info("Successfully hashed %d image(s).", len(hashed))

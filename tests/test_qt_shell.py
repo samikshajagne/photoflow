@@ -91,8 +91,8 @@ def test_metadata_panel_placeholders_and_set(qapp):
 def test_main_window_has_toolbar_actions(qapp):
     win = MainWindow()
     labels = {win.action_open.text(), win.action_analyze.text(), win.action_refresh.text()}
-    assert labels == {"Open Folder", "Analyze Folder", "Refresh"}
-    # Analyze/Refresh disabled until a folder is loaded.
+    assert labels == {"Open & Analyze", "Re-analyze", "Refresh"}
+    # Re-analyze/Refresh disabled until a folder is loaded.
     assert win.action_analyze.isEnabled() is False
     assert win.action_refresh.isEnabled() is False
 

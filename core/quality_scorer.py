@@ -171,10 +171,10 @@ class QualityScorer:
             raise QualityScoringError(
                 f"usable_sharpness_min must be >= 0, got {usable_sharpness_min}"
             )
-        if not 0.0 <= usable_brightness_min <= usable_brightness_max <= 255.0:
+        if not 0.0 <= usable_brightness_min < usable_brightness_max <= 255.0:
             raise QualityScoringError(
                 "usable_brightness bounds must satisfy "
-                f"0 <= min <= max <= 255, got min={usable_brightness_min}, "
+                f"0 <= min < max <= 255, got min={usable_brightness_min}, "
                 f"max={usable_brightness_max}"
             )
 

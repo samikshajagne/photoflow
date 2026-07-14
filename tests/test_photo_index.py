@@ -137,5 +137,12 @@ def test_from_result_attaches_tier():
 
 
 def test_normalize_path_is_absolute():
-    assert normalize_path("a/b.jpg").endswith("a/b.jpg")
+    import os
+    # normalize_path resolves to an absolute path; the original relative suffix
+    # is preserved (using the OS separator, not necessarily a forward slash).
+    normalized = normalize_path("a/b.jpg")
+    assert os.path.isabs(normalized)
+    # The filename is always preserved.
+    assert normalized.endswith("b.jpg")
+    # Calling it twice on the same input gives the same result.
     assert normalize_path("a/b.jpg") == normalize_path("a/b.jpg")

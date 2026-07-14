@@ -1,0 +1,26 @@
+{
+  "name": "classic-1",
+  "theme": "classic",
+  "slots": [
+    {
+      "rect": [
+        0.0,
+        0.0,
+        1.0,
+        1.0
+      ],
+      "shape": "rect",
+      "corner_radius": 0.08,
+      "border": 0.0,
+      "border_color": "#FFFFFF",
+      "rotation_deg": 0.0,
+      "shadow": false,
+      "fit": "cover"
+    }
+  ],
+  "background": {
+    "type": "sampled",
+    "color": null,
+    "lighten": 0.62
+  }
+}

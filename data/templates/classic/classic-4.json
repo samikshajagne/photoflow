@@ -1,0 +1,71 @@
+{
+  "name": "classic-4",
+  "theme": "classic",
+  "slots": [
+    {
+      "rect": [
+        0.0,
+        0.0,
+        0.5,
+        1.0
+      ],
+      "shape": "rect",
+      "corner_radius": 0.08,
+      "border": 0.006,
+      "border_color": "#FFFFFF",
+      "rotation_deg": 0.0,
+      "shadow": true,
+      "fit": "cover"
+    },
+    {
+      "rect": [
+        0.54,
+        0.03,
+        0.44,
+        0.3
+      ],
+      "shape": "circle",
+      "corner_radius": 0.08,
+      "border": 0.008,
+      "border_color": "#FFFFFF",
+      "rotation_deg": 0.0,
+      "shadow": true,
+      "fit": "cover"
+    },
+    {
+      "rect": [
+        0.54,
+        0.35,
+        0.44,
+        0.3
+      ],
+      "shape": "rounded",
+      "corner_radius": 0.08,
+      "border": 0.006,
+      "border_color": "#FFFFFF",
+      "rotation_deg": 0.0,
+      "shadow": true,
+      "fit": "cover"
+    },
+    {
+      "rect": [
+        0.54,
+        0.68,
+        0.44,
+        0.3
+      ],
+      "shape": "diamond",
+      "corner_radius": 0.08,
+      "border": 0.008,
+      "border_color": "#FFFFFF",
+      "rotation_deg": 0.0,
+      "shadow": true,
+      "fit": "cover"
+    }
+  ],
+  "background": {
+    "type": "sampled",
+    "color": null,
+    "lighten": 0.62
+  }
+}

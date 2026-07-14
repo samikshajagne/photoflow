@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photoflow"
+version = "0.1.0"
+description = "Local-first wedding-photo triage and album builder (PyQt6 desktop app)."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "PhotoFlow" }]
+
+# Mirror of requirements.txt so `pip install .` pulls the full runtime stack.
+dependencies = [
+    "PyYAML>=6.0,<7.0",
+    "Pillow>=10.0,<13.0",
+    "psd-tools>=1.16,<2.0",
+    "ImageHash>=4.3,<5.0",
+    "opencv-python-headless>=4.8,<5.0",
+    "numpy>=1.24,<3.0",
+    "mediapipe>=0.10,<1.0",
+    "insightface>=0.7,<0.8",
+    "onnxruntime>=1.16,<2.0",
+    "PyQt6>=6.5,<7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4,<9.0",
+    "pytest-cov>=4.1,<6.0",
+    "ruff>=0.5,<1.0",
+    "mypy>=1.8,<2.0",
+]
+
+# Desktop app and CLI entry points (installed onto PATH by pip).
+[project.gui-scripts]
+photoflow = "ui_qt.main:main"
+
+[project.scripts]
+photoflow-cli = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["core*", "utils*", "ui_qt*", "ui*"]
+
+[tool.setuptools.package-data]
+# Shipped config + bundled detection model.
+"*" = ["data/*.yaml", "data/models/*"]
+
+# --------------------------------------------------------------------------- #
+# Lint / format (ruff) and type-check (mypy) configuration.
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+# pycodestyle/pyflakes + import sorting (I), bugbear (B), pyupgrade (UP).
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]  # line length handled by the formatter
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true   # cv2/mediapipe/insightface ship no stubs
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+exclude = ["\\.venv", "build", "dist"]

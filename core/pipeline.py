@@ -30,8 +30,9 @@ from __future__ import annotations
 
 import dataclasses
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, TypeVar, Union
 
 from core.blur_detector import BlurDetectionError, BlurDetector, BlurResult
 from core.duplicate_detector import DuplicateDetector
@@ -50,10 +51,13 @@ from utils.logger import get_logger
 
 if TYPE_CHECKING:
     from utils.config import AppConfig
+    from persistence.analysis_cache import AnalysisCache
 
 logger = get_logger(__name__)
 
 PathLike = Union[str, Path]
+_T = TypeVar("_T")
+_R = TypeVar("_R")
 
 # Category keys reported in counts, in display order.
 _REPORT_FOLDERS: tuple[str, ...] = (
@@ -111,6 +115,10 @@ class PipelineResult:
             above ``BEST_SHOTS_QUALITY_FLOOR`` (no percentage, no cap), ordered
             best-first. These are routed to the BestShots folder and are the
             album source.
+        all_faces_failed: ``True`` when face detection failed for every scanned
+            image (100% failure rate), which usually means MediaPipe is not
+            installed or misconfigured. When ``True``, the face sub-score is
+            excluded from quality scoring so BestShots is not arbitrarily emptied.
     """
 
     input_folder: str
@@ -127,6 +135,15 @@ class PipelineResult:
     face_failures: tuple[str, ...]
     quality_results: tuple[QualityResult, ...]
     best_shot_candidates: tuple[str, ...]
+    # Normalized paths of non-representative duplicates (routed to Duplicates),
+    # defaulted so existing constructions stay valid; the pipeline always sets it.
+    duplicate_paths: tuple[str, ...] = ()
+    # True when face detection failed for ALL images (100% failure rate).
+    all_faces_failed: bool = False
+    # True when images were found but NONE could be quality-scored (e.g. every
+    # file was corrupt/undecodable). Distinguishes "nothing processable" from a
+    # genuinely empty folder so callers can warn instead of reporting success.
+    all_unreadable: bool = False
 
 
 class PhotoFlowPipeline:
@@ -152,6 +169,7 @@ class PhotoFlowPipeline:
         organizer: PhotoOrganizer,
         quality_scorer: Optional[QualityScorer] = None,
         face_detector: Optional[FaceDetector] = None,
+        max_workers: Optional[int] = None,
     ) -> None:
         self.scanner = scanner
         self.duplicate_detector = duplicate_detector
@@ -161,6 +179,11 @@ class PhotoFlowPipeline:
         # default-configured components.
         self.quality_scorer = quality_scorer if quality_scorer is not None else QualityScorer()
         self.face_detector = face_detector if face_detector is not None else FaceDetector()
+        # Thread-pool size for the per-image CPU/IO-bound stages (blur, quality).
+        # ``None`` or ``1`` runs sequentially (deterministic; the historical
+        # behaviour). cv2/PIL release the GIL during decode, so threads — not
+        # processes — give a real speed-up without any pickling constraints.
+        self.max_workers = max_workers if (max_workers is None or max_workers >= 1) else None
 
     @classmethod
     def from_config(cls, config: "AppConfig") -> "PhotoFlowPipeline":
@@ -172,6 +195,7 @@ class PhotoFlowPipeline:
             organizer=PhotoOrganizer.from_config(config),
             quality_scorer=QualityScorer.from_config(config),
             face_detector=FaceDetector.from_config(config),
+            max_workers=config.performance.worker_pool_size,
         )
 
     def run(
@@ -179,6 +203,7 @@ class PhotoFlowPipeline:
         input_folder: PathLike,
         destination_root: Optional[PathLike] = None,
         dry_run: bool = False,
+        cache: Optional["AnalysisCache"] = None,
     ) -> PipelineResult:
         """
         Run the full pipeline over ``input_folder``.
@@ -189,6 +214,12 @@ class PhotoFlowPipeline:
                 Defaults to ``input_folder`` itself. Ignored when ``dry_run``
                 is true.
             dry_run: If true, classify, score, and count only; copy nothing.
+            cache: Optional :class:`~persistence.analysis_cache.AnalysisCache`.
+                When given, per-image face detections are read from it (reusing
+                a prior pass) and freshly detected faces are written back under
+                the ``"faces"`` namespace, so downstream identity work does not
+                re-run face detection. The caller is responsible for
+                :meth:`~persistence.analysis_cache.AnalysisCache.save`.
 
         Returns:
             A :class:`PipelineResult` summarizing the run.
@@ -201,17 +232,61 @@ class PhotoFlowPipeline:
         logger.info("Pipeline starting on '%s' (dry_run=%s).", source, dry_run)
 
         try:
+            # Scan the folder exactly once and reuse that authoritative list for
+            # duplicate detection too, so both stages see an identical file set
+            # and the tree is not walked twice.
             images = self.scanner.scan(source)
-            duplicate_results = self.duplicate_detector.detect(source)
+            duplicate_results = self.duplicate_detector.detect(source, image_paths=images)
         except Exception as exc:  # scanner/detector raise their own error types
             raise PipelineError(f"Pipeline failed during analysis: {exc}") from exc
 
+        if not images:
+            logger.warning("No supported image files found in '%s'.", source)
+
         blur_results, blur_failures = self._run_blur(images)
-        face_by_path, face_failures = self._run_faces(images)
+        face_by_path, face_failures = self._run_faces(images, cache)
+
+        # Detect 100%-failure condition and bypass face scoring to avoid
+        # unfairly penalizing every photo when MediaPipe is broken/missing.
+        all_faces_failed = bool(images) and len(face_failures) == len(images)
+        if all_faces_failed:
+            logger.error(
+                "Face detection FAILED for ALL %d image(s). "
+                "Check MediaPipe install (pip install mediapipe) and the model "
+                "file at data/models/blaze_face_short_range.tflite. "
+                "Face sub-score is EXCLUDED from quality scoring for this run "
+                "so BestShots selection is not arbitrarily emptied.",
+                len(images),
+            )
+
+        quality_scorer = self.quality_scorer
+        if all_faces_failed:
+            # Build a temporary scorer with face_weight=0 so the broken face
+            # stage does not unfairly drain every photo's quality score.
+            quality_scorer = QualityScorer(
+                blur_weight=self.quality_scorer.blur_weight,
+                exposure_weight=self.quality_scorer.exposure_weight,
+                face_weight=0.0,
+                blur_score_min=self.quality_scorer.blur_score_min,
+                contrast_reference=self.quality_scorer.contrast_reference,
+                usable_sharpness_min=self.quality_scorer.usable_sharpness_min,
+                usable_brightness_min=self.quality_scorer.usable_brightness_min,
+                usable_brightness_max=self.quality_scorer.usable_brightness_max,
+            )
 
         quality_results, quality_by_path, usable_by_path = self._run_quality(
-            blur_results, face_by_path
+            blur_results, face_by_path, quality_scorer
         )
+
+        # Distinguish "empty folder" from "found files but none were readable".
+        all_unreadable = bool(images) and not quality_results
+        if all_unreadable:
+            logger.error(
+                "Found %d image file(s) but none could be analyzed (all decode/"
+                "scoring attempts failed). Check that the files are valid images "
+                "and not corrupt or an unsupported RAW format.",
+                len(images),
+            )
 
         # Re-pick each duplicate group's representative as its highest-quality
         # member. Duplicate *detection* is untouched (duplicate_detector still
@@ -278,6 +353,9 @@ class PhotoFlowPipeline:
             face_failures=tuple(face_failures),
             quality_results=tuple(quality_results),
             best_shot_candidates=best_shot_candidates,
+            duplicate_paths=tuple(sorted(duplicate_paths)),
+            all_faces_failed=all_faces_failed,
+            all_unreadable=all_unreadable,
         )
         logger.info(
             "Pipeline finished: scanned=%d duplicates=%d blurry=%d faces=%d -> %s",
@@ -289,30 +367,74 @@ class PhotoFlowPipeline:
         )
         return result
 
+    def _map(self, func: Callable[[_T], _R], items: list[_T]) -> list[_R]:
+        """
+        Apply ``func`` to each item, in input order, using a thread pool when
+        :attr:`max_workers` > 1 and there is enough work to be worth it.
+
+        ``ThreadPoolExecutor.map`` preserves input order, so results stay
+        deterministic regardless of worker count. Threads (not processes) are
+        used because the per-image work is dominated by native cv2/PIL decode,
+        which releases the GIL — so this parallelises without imposing any
+        picklability constraints on the detectors.
+        """
+        if not items:
+            return []
+        workers = self.max_workers
+        if workers is None or workers <= 1 or len(items) == 1:
+            return [func(item) for item in items]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(func, items))
+
     def _run_blur(self, images: list[Path]) -> tuple[list[BlurResult], list[str]]:
         """Score each image; collect failures instead of aborting the run."""
-        results: list[BlurResult] = []
-        failures: list[str] = []
-        for path in images:
+
+        def work(path: Path) -> tuple[Optional[BlurResult], Optional[str]]:
             try:
-                results.append(self.blur_detector.detect(path))
+                return self.blur_detector.detect(path), None
             except BlurDetectionError as exc:
                 logger.warning("Blur analysis failed for '%s': %s", path, exc)
-                failures.append(str(path))
+                return None, str(path)
+
+        results: list[BlurResult] = []
+        failures: list[str] = []
+        for result, failure in self._map(work, images):
+            if failure is not None:
+                failures.append(failure)
+            elif result is not None:
+                results.append(result)
         return results, failures
 
     def _run_faces(
-        self, images: list[Path]
+        self, images: list[Path], cache: Optional["AnalysisCache"] = None
     ) -> tuple[dict[str, FaceResult], list[str]]:
         """
         Detect faces per image, keyed by normalized path.
 
         Failures are non-fatal: a failed image is omitted from the map (so it
         is treated as having no faces downstream) and its path is recorded.
+
+        When a ``cache`` is supplied, a fresh ``"faces"`` entry is reused
+        instead of re-detecting, and any newly-detected regions are written
+        back so later stages (e.g. album identity clustering) can reuse them
+        without a second detection pass. A cached entry (even an empty region
+        list, meaning "no faces") is authoritative and never counted as a
+        failure.
         """
         by_path: dict[str, FaceResult] = {}
         failures: list[str] = []
         for path in images:
+            key = self._normalize(path)
+            cached = cache.get("faces", path) if cache is not None else None
+            if cached is not None:
+                regions = tuple(tuple(float(v) for v in box) for box in cached)
+                by_path[key] = FaceResult(
+                    image_path=str(path),
+                    face_count=len(regions),
+                    faces_detected=len(regions) > 0,
+                    regions=regions,
+                )
+                continue
             try:
                 result = self.face_detector.detect(path)
             except FaceDetectionError as exc:
@@ -320,12 +442,17 @@ class PhotoFlowPipeline:
                 failures.append(str(path))
                 continue
             by_path[self._normalize(result.image_path)] = result
+            if cache is not None:
+                cache.put(
+                    "faces", result.image_path, [list(box) for box in result.regions]
+                )
         return by_path, failures
 
     def _run_quality(
         self,
         blur_results: list[BlurResult],
         face_by_path: dict[str, FaceResult],
+        quality_scorer: Optional[QualityScorer] = None,
     ) -> tuple[list[QualityResult], dict[str, float], dict[str, bool]]:
         """
         Quality-score every successfully blur-analyzed image.
@@ -335,18 +462,21 @@ class PhotoFlowPipeline:
         Returns the results plus two normalized-path lookups: one of quality
         scores (for representative re-ranking and BestShots selection) and one
         of usability verdicts (for routing the Blurry bin).
+
+        Args:
+            quality_scorer: Override scorer (e.g. with face_weight=0 when the
+                face stage failed for all images). Defaults to self.quality_scorer.
         """
-        results: list[QualityResult] = []
-        by_path: dict[str, float] = {}
-        usable_by_path: dict[str, bool] = {}
-        for blur in blur_results:
+        scorer = quality_scorer if quality_scorer is not None else self.quality_scorer
+
+        def work(blur: BlurResult) -> Optional[QualityResult]:
             key = self._normalize(blur.path)
             face = face_by_path.get(key)
             faces_detected = bool(face.faces_detected) if face is not None else False
             face_count = int(face.face_count) if face is not None else 0
             face_regions = tuple(face.regions) if face is not None else ()
             try:
-                quality = self.quality_scorer.score(
+                return scorer.score(
                     blur.path,
                     blur.blur_score,
                     faces_detected=faces_detected,
@@ -355,6 +485,13 @@ class PhotoFlowPipeline:
                 )
             except QualityScoringError as exc:
                 logger.warning("Quality scoring failed for '%s': %s", blur.path, exc)
+                return None
+
+        results: list[QualityResult] = []
+        by_path: dict[str, float] = {}
+        usable_by_path: dict[str, bool] = {}
+        for quality in self._map(work, blur_results):
+            if quality is None:
                 continue
             results.append(quality)
             norm = self._normalize(quality.image_path)

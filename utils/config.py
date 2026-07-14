@@ -51,11 +51,12 @@ class LoggingConfig:
 
 @dataclasses.dataclass(frozen=True)
 class ThresholdsConfig:
-    """Not yet consumed by any module in Milestone 1; reserved for Milestone 2+."""
+    """Analysis thresholds consumed by blur, face, and quality stages."""
 
     blur_score_min: float
     duplicate_hash_distance_max: int
     face_detection_confidence_min: float
+    face_model_path: Optional[str] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -203,6 +204,11 @@ def load_config(override_path: Optional[Union[str, Path]] = None) -> AppConfig:
                 blur_score_min=float(thresholds_data["blur_score_min"]),
                 duplicate_hash_distance_max=int(thresholds_data["duplicate_hash_distance_max"]),
                 face_detection_confidence_min=float(thresholds_data["face_detection_confidence_min"]),
+                face_model_path=(
+                    str(thresholds_data["face_model_path"])
+                    if thresholds_data.get("face_model_path") is not None
+                    else None
+                ),
             ),
             scoring_weights=ScoringWeightsConfig(
                 blur_weight=float(scoring_data["blur_weight"]),
@@ -260,3 +266,19 @@ def _validate_semantics(config: AppConfig) -> None:
 
     if config.performance.analysis_max_edge_px <= 0:
         raise ConfigError("performance.analysis_max_edge_px must be a positive integer")
+
+    thresholds = config.thresholds
+    if not 0.0 <= thresholds.face_detection_confidence_min <= 1.0:
+        raise ConfigError(
+            "thresholds.face_detection_confidence_min must be between 0.0 and 1.0, "
+            f"got {thresholds.face_detection_confidence_min}"
+        )
+    if thresholds.duplicate_hash_distance_max < 0:
+        raise ConfigError(
+            "thresholds.duplicate_hash_distance_max must be >= 0, "
+            f"got {thresholds.duplicate_hash_distance_max}"
+        )
+    if thresholds.blur_score_min < 0:
+        raise ConfigError(
+            f"thresholds.blur_score_min must be >= 0, got {thresholds.blur_score_min}"
+        )

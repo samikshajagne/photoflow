@@ -81,6 +81,7 @@ class AnalysisController(QObject):
     finished = pyqtSignal(object)  # PipelineResult
     failed = pyqtSignal(str)
     cancelled = pyqtSignal()
+    stopped = pyqtSignal()
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -145,6 +146,7 @@ class AnalysisController(QObject):
         if self._cancelled and not self._got_result:
             self.cancelled.emit()
         self._cleanup()
+        self.stopped.emit()
 
     def _cleanup(self) -> None:
         self._waiter = None

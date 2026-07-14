@@ -33,6 +33,7 @@ DEFAULT_SUPPORTED_EXTENSIONS: tuple[str, ...] = (
     ".jpeg",
     ".png",
     ".bmp",
+    ".tif",
     ".tiff",
 )
 

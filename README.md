@@ -4,28 +4,9 @@ A local-first Windows desktop tool that triages wedding photo shoots
 (1,000–5,000 images) into `BestShots` / `Duplicates` / `Blurry` /
 `Review`, so photographers don't spend hours sorting manually.
 
-## ⚠️ Milestone 1 scope (this codebase)
+## Overview
 
-This milestone is **setup only**, per the agreed roadmap:
-
-**In scope:**
-- Project scaffold (final folder structure, with empty packages where
-  future milestones will add code)
-- Configuration system: load defaults, merge an optional user override,
-  validate everything into typed objects
-- Logging system: rotating file log + console output
-- A `main.py` that proves the above two work together
-- Unit tests for the config and logging modules
-
-**Explicitly NOT in scope yet** (later milestones):
-- Scanning a photo folder
-- Any image analysis (blur, faces, duplicates, quality score)
-- Classifying or moving/copying any files
-- The Streamlit UI
-- The SQLite result cache
-
-If you run `main.py`, it will load config, set up logging, print a
-startup confirmation, and exit. It does not touch any photos.
+PhotoFlow scans a folder of photos, automatically detects duplicates and blurry images, calculates quality scores, detects faces, and organizes the images into categorized directories under a parent output folder (`PhotoFlow_Output`). 
 
 ---
 
@@ -33,101 +14,115 @@ startup confirmation, and exit. It does not touch any photos.
 
 ```
 photoflow/
-├── main.py                     # Entry point for this milestone (see below)
+├── main.py                     # CLI entry point — scan + organize a photo folder
 ├── core/
-│   └── __init__.py             # Empty placeholder — pipeline modules land here in Milestone 2
-├── persistence/
-│   └── __init__.py             # Empty placeholder — SQLite cache lands here in Milestone 2/3
-├── ui/
-│   ├── __init__.py             # Empty placeholder — Streamlit app lands here in a later milestone
-│   └── components/
-│       └── __init__.py         # Empty placeholder — reusable widgets (gallery, progress bar, etc.)
+│   ├── pipeline.py             # End-to-end orchestration (scan→dup→blur→face→quality→organize)
+│   ├── scanner.py              # Walks a folder and enumerates supported image files
+│   ├── duplicate_detector.py   # Perceptual-hash duplicate detection
+│   ├── blur_detector.py        # Variance-of-Laplacian blur scoring
+│   ├── face_detector.py        # MediaPipe face detection (Solutions + Tasks API fallback)
+│   ├── quality_scorer.py       # 0-100 quality score (sharpness, exposure, faces)
+│   ├── organizer.py            # Copies photos into BestShots/Duplicates/Blurry/Review
+│   ├── auto_edit.py            # Auto tone/colour corrections
+│   ├── identity.py             # Per-person identity tracking across a shoot
+│   ├── face_embedder.py        # Face embedding via InsightFace
+│   ├── person_cluster.py       # Clusters embeddings into person identities
+│   ├── timeline.py             # Shoot timeline segmentation
+│   └── album/                  # Album layout and export pipeline
+├── ui_qt/
+│   ├── main.py                 # Desktop UI entry point (PyQt6)
+│   ├── views/                  # Qt view modules (main window, gallery, etc.)
+│   ├── workers/                # Background Qt worker threads
+│   ├── models/                 # Qt data models
+│   └── theme.py                # Dark theme applied to the Qt app
+├── tools/
+│   └── diagnose.py             # Diagnostic runner — full DEBUG log + env/model checks
 ├── utils/
-│   ├── __init__.py             # Package marker + one-line description
 │   ├── config.py               # Loads, merges, and validates configuration
-│   └── logger.py                # Sets up rotating-file + console logging
+│   └── logger.py               # Rotating-file + console logging setup
 ├── data/
-│   └── default_config.yaml     # Shipped default configuration values
-├── tests/
-│   ├── __init__.py             # Package marker (lets pytest resolve `from utils...` imports)
-│   ├── test_config.py          # Unit tests for utils/config.py
-│   └── test_logger.py          # Unit tests for utils/logger.py
-├── logs/
-│   └── .gitkeep                 # Keeps the (otherwise empty) logs/ folder in the repo
-├── requirements.txt             # Runtime dependencies for *this* milestone only
-├── requirements-dev.txt         # + pytest, for running the test suite
-├── pytest.ini                    # Tells pytest where to find tests
+│   ├── default_config.yaml     # Shipped default configuration values
+│   └── models/                 # Optional bundled model files (e.g. blaze_face_short_range.tflite)
+├── tests/                      # pytest unit tests
+├── logs/                       # Runtime log output (gitignored except .gitkeep)
+├── requirements.txt            # Runtime dependencies
+├── requirements-dev.txt        # + pytest, for running the test suite
+├── pytest.ini                  # Points pytest at the tests/ directory
 └── .gitignore
 ```
 
-### File-by-file explanation
+---
 
-| File | What it does |
-|---|---|
-| `main.py` | The only executable entry point right now. Parses an optional `--config` CLI flag, loads/validates configuration, sets up logging, and logs a handful of confirmation messages. This is intentionally the *full* extent of the program's behavior in Milestone 1 — it's a smoke test for the scaffold, not a pipeline runner. |
-| `utils/config.py` | Defines the configuration schema as frozen (immutable) dataclasses (`IOConfig`, `LoggingConfig`, `ThresholdsConfig`, `ScoringWeightsConfig`, `PerformanceConfig`, wrapped in `AppConfig`). `load_config()` reads `data/default_config.yaml`, optionally deep-merges a user override file on top, and validates everything (required sections/keys present, correct types, sane values like weights summing to 1.0). Raises a clear `ConfigError` on any problem. Note: `ThresholdsConfig`, `ScoringWeightsConfig`, and `PerformanceConfig` are defined and validated now, but nothing reads them yet — they exist so the schema is locked in before Milestone 2 needs it. |
-| `utils/logger.py` | `setup_logging()` configures the `photoflow` logger with a `RotatingFileHandler` (writes to `logs/photoflow.log`, rotates by size) and a console `StreamHandler`, sharing one formatter. It's idempotent — calling it twice replaces handlers instead of duplicating them. `get_logger(name)` is what every other module will call (e.g. `get_logger(__name__)`) to get a properly namespaced child logger that inherits these handlers. |
-| `data/default_config.yaml` | The actual default values: supported file extensions, output folder naming, copy-vs-move behavior, logging level/rotation settings, and the not-yet-used analysis thresholds/weights/performance settings reserved for later milestones. |
-| `core/__init__.py`, `persistence/__init__.py`, `ui/__init__.py`, `ui/components/__init__.py` | Empty packages with a docstring explaining what will live there. They exist now purely so the folder structure is visible and stable; no logic is implemented inside them. |
-| `tests/test_config.py` | Covers: default config loads cleanly; an override file correctly merges on top of (not replaces) the defaults; missing/malformed override files raise `ConfigError`; semantic validation rules (bad log level, weights not summing to 1, extensions missing a leading dot, negative worker pool size) all raise `ConfigError`; `worker_pool_size: null` is accepted as valid (means "auto"). |
-| `tests/test_logger.py` | Covers: `setup_logging()` creates the log directory and a working log file; calling it twice doesn't create duplicate handlers; `get_logger()` produces correctly namespaced logger names; the configured log level is actually respected (e.g. `INFO` messages are suppressed when level is `WARNING`). |
-| `requirements.txt` | Just `PyYAML` — the only third-party dependency this milestone's code actually imports. OpenCV/Pillow/NumPy/ImageHash/MediaPipe/Streamlit are deliberately *not* listed yet; see the comment in the file. |
-| `requirements-dev.txt` | `requirements.txt` plus `pytest`, for anyone running the test suite. |
-| `pytest.ini` | Points pytest at the `tests/` directory. |
-| `.gitignore` | Standard Python ignores, plus the runtime-generated `logs/*.log` and a future `data/cache.db`. |
+## Running the Application
+
+### Option 1: Desktop UI (Recommended)
+To launch the desktop application, run:
+```bash
+python -m ui_qt.main
+```
+or:
+```bash
+python ui_qt/main.py
+```
+This starts the PhotoFlow PyQt6 desktop application, providing an intuitive interface for folder selection, scanning, and reviewing photos.
+
+### Option 2: Command-Line Interface (CLI)
+You can also run the pipeline directly from the command line over a folder of photos.
+
+**Usage:**
+```bash
+python main.py PHOTO_FOLDER [--output DIR] [--dry-run] [--config PATH]
+```
+
+**Examples:**
+- Preview what would happen without copying any files (Dry Run):
+  ```bash
+  python main.py "C:/Users/me/Pictures/Trip" --dry-run
+  ```
+- Scan and organize copies of photos into `<PHOTO_FOLDER>/PhotoFlow_Output`:
+  ```bash
+  python main.py "C:/Users/me/Pictures/Trip"
+  ```
+- Organize photos into a different destination using a custom configuration override:
+  ```bash
+  python main.py ./photos --output ./sorted --config ./my_config.yaml
+  ```
 
 ---
 
-## Setup instructions
+## Debugging — Diagnostic Runner
 
-**Requirements:** Python 3.10 or newer (Windows, macOS, or Linux — nothing
-in this milestone is platform-specific yet).
+`tools/diagnose.py` runs the album pipeline on a folder with **full DEBUG logging** captured to a single file (`logs/photoflow_debug.log`), overwriting it on each run so you always get one clean, shareable capture.
 
-1. Clone/copy the project, then from the `photoflow/` directory create a
-   virtual environment:
+### What it captures
 
-   **Windows (PowerShell):**
-   ```powershell
-   python -m venv .venv
-   .venv\Scripts\Activate.ps1
-   ```
+| Section | What you learn |
+|---|---|
+| **Environment** | Python version, OS, and whether `cv2 / mediapipe / insightface / onnxruntime / PyQt6` import, plus whether the MediaPipe face model and InsightFace `buffalo_l` are present on disk |
+| **Full DEBUG trace** | Every stage: scan → duplicates → blur → faces → quality → identity → story → layout → export, including per-photo "no faces" debug lines explaining why face counts come back 0 |
+| **Category distribution** | How many photos landed in each output folder |
+| **Face-count distribution** | How many photos had 0 / 1 / 2 / … detected faces (or `unknown`) |
+| **Sections & spreads** | Section names + photo counts, total spread count, manifest path |
+| **SUCCESS / FAILED marker** | A clear final line; on failure the full traceback is included |
 
-   **macOS/Linux:**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
+### Usage
 
-2. Install dependencies:
+**Debug an album run** (paste `logs/photoflow_debug.log` when reporting issues):
+```powershell
+python tools\diagnose.py "D:\path\to\your\photos"
+```
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+**Environment-only check** (no photos needed — verifies all backends are installed):
+```powershell
+python tools\diagnose.py
+```
 
-3. Run it:
+**Capture a pytest run alongside:**
+```powershell
+python -m pytest -q > logs\pytest.log 2>&1
+```
 
-   ```bash
-   python main.py
-   ```
-
-   You should see console output similar to:
-
-   ```
-   2026-06-18 10:00:00 | INFO     | photoflow.main | PhotoFlow scaffold initialized successfully (Milestone 1).
-   2026-06-18 10:00:00 | INFO     | photoflow.main | Supported file types: .jpg, .jpeg, .png, .tif, .tiff | Output folder name: PhotoFlow_Output | File mode: copy
-   2026-06-18 10:00:00 | INFO     | photoflow.main | Log files are being written to: /path/to/photoflow/logs
-   2026-06-18 10:00:00 | INFO     | photoflow.main | No image scanning or analysis is implemented yet — that begins in Milestone 2.
-   ```
-
-   The same lines will also be appended to `logs/photoflow.log`.
-
-4. (Optional) Run with a custom config override, e.g. to bump the log
-   level to `DEBUG`:
-
-   ```bash
-   echo "logging:`n  level: DEBUG" > my_override.yaml   # PowerShell
-   python main.py --config my_override.yaml
-   ```
+> **Tip:** The log file is always overwritten on each run — you'll never get mixed output from different sessions.
 
 ---
 
@@ -152,18 +147,31 @@ in this milestone is platform-specific yet).
    pytest -v
    ```
 
-3. Expected result: all tests in `tests/test_config.py` and
-   `tests/test_logger.py` pass. Tests use `tmp_path` fixtures for any
+3. Expected result: all tests pass. Tests use `tmp_path` fixtures for any
    file I/O, so they never write into the real `logs/` directory or
    touch `data/default_config.yaml`.
 
 ---
 
-## What happens next (Milestone 2 preview, not implemented here)
+## Setup
 
-Milestone 2 will fill in `core/scanner.py`, `core/preprocessor.py`,
-`core/blur_detector.py`, `core/face_detector.py`,
-`core/duplicate_detector.py`, `core/quality_scorer.py`,
-`core/classifier.py`, `core/organizer.py`, and `core/pipeline.py`, wired
-together end-to-end on a small sample folder via the CLI — no caching,
-multiprocessing, or UI yet. This document will be updated alongside it.
+**Requirements:** Python 3.10 or newer, Windows/macOS/Linux.
+
+1. Create and activate a virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+2. Install runtime dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```

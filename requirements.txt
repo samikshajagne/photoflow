@@ -8,13 +8,20 @@
 #   core/quality_scorer.py, core/face_detector.py). Headless because
 #   PhotoFlow needs no GUI windowing.
 # - MediaPipe: face detection (core/face_detector.py).
-# - Streamlit: the desktop UI (ui/app.py).
+# - InsightFace + onnxruntime: face embeddings for person/identity clustering
+#   (core/insightface_backend.py, used by the album orchestrator). Required for
+#   person-aware albums; the feature degrades gracefully if absent.
+# - psd-tools: write layered .psd album spreads directly (core/album/raster.py),
+#   enabling PNG/JPG/PDF/PSD album export with no Photoshop required.
+# - PyQt6: the desktop UI (ui_qt/).
 
 PyYAML>=6.0,<7.0
 Pillow>=10.0,<13.0
+psd-tools>=1.16,<2.0
 ImageHash>=4.3,<5.0
 opencv-python-headless>=4.8,<5.0
 numpy>=1.24,<3.0
-mediapipe>=0.10,<0.11
-streamlit>=1.30,<2.0
+mediapipe>=0.10,<1.0
+insightface>=0.7,<0.8
+onnxruntime>=1.16,<2.0
 PyQt6>=6.5,<7.0
