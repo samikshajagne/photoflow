@@ -595,8 +595,80 @@ def select_template(
 
 
 def auto_grid_template(count: int, theme: str = DEFAULT_THEME, variant: int = 0) -> SpreadTemplate:
-    """A rectangular grid of ``count`` slots; ``variant`` varies the columns."""
+    """A rectangular grid of ``count`` slots; ``variant`` varies the columns.
+
+    For the 'natural' theme, this creates sophisticated B2B-ready layouts:
+    - 1-photo: Full Panoramic bleed
+    - 2-photo: Asymmetric Duo (overlay on background)
+    - >=3-photo (even variant, or count < 6): Left Page Hero + Right Page Grid
+    - >=6-photo (odd variant): Full Bleed Panoramic Background + Horizontal Bottom Overlay Strip
+    """
     import math
+
+    if theme == "natural":
+        if count == 1:
+            return SpreadTemplate(
+                name="natural-auto-1", theme=theme,
+                slots=(TemplateSlot(rect=(0.0, 0.0, 1.0, 1.0), shape=SHAPE_RECT, border=0.0, shadow=False),),
+                background=Background(type=BG_SOLID, color="#111111")
+            )
+        elif count == 2:
+            return SpreadTemplate(
+                name="natural-auto-2", theme=theme,
+                slots=(
+                    TemplateSlot(rect=(0.0, 0.0, 1.0, 1.0), shape=SHAPE_RECT, border=0.0, shadow=False, z_index=0),
+                    TemplateSlot(rect=(0.68, 0.62, 0.25, 0.30), shape=SHAPE_ROUNDED, corner_radius=0.06,
+                                 border=_BORDER, border_color=_WHITE, shadow=True, z_index=1),
+                ),
+                background=Background(type=BG_SOLID, color="#111111")
+            )
+
+        # For 6+ photos, alternate between Left Hero + Grid and Panoramic + Bottom Overlays
+        if count >= 6 and variant % 2 == 1:
+            # Panoramic background + horizontal bottom overlay strip (z=1)
+            slots = [
+                TemplateSlot(rect=(0.0, 0.0, 1.0, 1.0), shape=SHAPE_RECT, border=0.0, shadow=False, z_index=0)
+            ]
+            num_overlays = count - 1
+            margin_x = 0.06
+            avail_w = 0.88
+            g = 0.015
+            w = (avail_w - g * (num_overlays - 1)) / num_overlays
+            for i in range(num_overlays):
+                slots.append(
+                    TemplateSlot(
+                        rect=(margin_x + i * (w + g), 0.65, w, 0.28),
+                        shape=SHAPE_ROUNDED, corner_radius=0.04,
+                        border=0.005, border_color=_WHITE, shadow=True, z_index=1
+                    )
+                )
+            return SpreadTemplate(name=f"natural-auto-pano-strip-{count}", theme=theme, slots=tuple(slots),
+                                  background=Background(type=BG_SOLID, color="#111111"))
+        else:
+            # Left Hero + Right Grid (z=0)
+            hero = TemplateSlot(rect=(0.0, 0.0, 0.49, 1.0), shape=SHAPE_RECT, border=0.004, border_color=_WHITE,
+                                shadow=False, z_index=0, use_cutout=True)
+            slots = [hero]
+            num_right = count - 1
+            cols = 1 if num_right <= 3 else (2 if num_right <= 8 else 3)
+            rows = math.ceil(num_right / cols)
+            g = 0.015
+            cell_w = (0.47 - g * (cols - 1)) / cols
+            cell_h = (0.96 - g * (rows - 1)) / rows
+            for i in range(num_right):
+                r, c = divmod(i, cols)
+                x = 0.51 + c * (cell_w + g)
+                y = 0.02 + r * (cell_h + g)
+                slots.append(
+                    TemplateSlot(
+                        rect=(x, y, cell_w, cell_h), shape=SHAPE_RECT,
+                        border=0.005, border_color=_WHITE, shadow=True, z_index=0
+                    )
+                )
+            return SpreadTemplate(name=f"natural-auto-hero-grid-{count}", theme=theme, slots=tuple(slots),
+                                  background=_BG)
+
+    # Standard grid fallback for classic theme
     base_cols = max(1, math.ceil(math.sqrt(count)))
     v = variant % 3
     cols = {0: base_cols, 1: base_cols + 1, 2: max(1, base_cols - 1)}[v]

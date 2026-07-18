@@ -149,7 +149,9 @@ def _distinct_orderings(profiles: Sequence[SlotProfile]) -> List[Tuple[SlotProfi
     return out
 
 
-def _shape_for(profile: SlotProfile, is_hero: bool) -> str:
+def _shape_for(profile: SlotProfile, is_hero: bool, theme: str = "classic") -> str:
+    if theme == "natural":
+        return SHAPE_RECT
     comp = profile.ideal_composition[0] if profile.ideal_composition else ""
     if is_hero:
         return SHAPE_RECT
@@ -177,6 +179,36 @@ def build_spread_template(
     if not slots:
         raise ValueError("flexible spread produced no slots")
 
+    theme = spread.theme or "classic"
+    
+    # Custom high-end layout rules for 2-photo spreads in the natural theme
+    if len(slots) == 2 and theme == "natural":
+        # Create an asymmetric overlapping duo layout (z=0 background, z=1 overlay)
+        template_slots = [
+            TemplateSlot(
+                rect=(0.0, 0.0, 1.0, 1.0),
+                shape=SHAPE_RECT,
+                border=0.0,
+                shadow=False,
+                use_cutout=False,
+                z_index=0
+            ),
+            TemplateSlot(
+                rect=(0.68, 0.62, 0.25, 0.30),
+                shape=SHAPE_RECT,
+                border=border,
+                shadow=True,
+                use_cutout=False,
+                z_index=1
+            )
+        ]
+        return SpreadTemplate(
+            name=spread.name,
+            theme=theme,
+            slots=tuple(template_slots),
+            background=background or Background(type=BG_SOLID, color="#111111"),
+        )
+
     orientations = [orientation_of(p.aspect_ratio) for p in slots]
     rects = get_layout_positions(orientations)
 
@@ -190,16 +222,17 @@ def build_spread_template(
         template_slots.append(
             TemplateSlot(
                 rect=rect,
-                shape=_shape_for(profile, is_hero),
-                border=border,
-                shadow=True,
+                shape=_shape_for(profile, is_hero, theme),
+                border=border if theme != "natural" or not is_hero else 0.004,
+                shadow=True if theme != "natural" or not is_hero else False,
                 use_cutout=cutout,
+                z_index=0
             )
         )
 
     return SpreadTemplate(
         name=spread.name,
-        theme=spread.theme,
+        theme=theme,
         slots=tuple(template_slots),
         background=background or Background(),
     )
