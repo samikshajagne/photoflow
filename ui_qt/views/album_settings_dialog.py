@@ -54,6 +54,11 @@ _DENSITIES = [
     ("Dense — more photos per spread (fewer spreads)", DENSITY_DENSE),
 ]
 
+_THEMES = [
+    ("Classic — geometric shapes (circles, ovals, diamonds)", "classic"),
+    ("Natural — editorial layouts (hero + overlapping frames)", "natural"),
+]
+
 
 class AlbumSettingsDialog(QDialog):
     """Collects the album spec + layout density before building an album."""
@@ -66,6 +71,7 @@ class AlbumSettingsDialog(QDialog):
         cover_title: str = "",
         cover_date: str = "",
         target_pages: int = 0,
+        layout_options: Optional[dict] = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Album Settings")
@@ -138,6 +144,38 @@ class AlbumSettingsDialog(QDialog):
         self.wedding_date.setText(cover_date or "")
         form.addRow("Wedding date:", self.wedding_date)
 
+        # Layout feature toggles (Phase 3 / 4). Smart placement is on by default;
+        # the rest are opt-in because they change the look prominently.
+        opts = layout_options or {}
+        self.smart_slot_ordering = QCheckBox("Smart photo placement (match photos to slots)")
+        self.smart_slot_ordering.setChecked(bool(opts.get("smart_slot_ordering", True)))
+        form.addRow("Layout:", self.smart_slot_ordering)
+
+        self.flexible_layout = QCheckBox("Adaptive layouts (vary slot types per spread)")
+        self.flexible_layout.setChecked(bool(opts.get("flexible_layout", False)))
+        form.addRow("", self.flexible_layout)
+
+        self.use_cutouts = QCheckBox("Cut-out hero photos (feathered silhouette)")
+        self.use_cutouts.setChecked(bool(opts.get("use_cutouts", False)))
+        form.addRow("", self.use_cutouts)
+
+        self.designed_cover = QCheckBox("Designed cover (hero + names + tagline)")
+        self.designed_cover.setChecked(bool(opts.get("designed_cover", False)))
+        form.addRow("", self.designed_cover)
+
+        self.theme_backgrounds = QCheckBox("Event-themed backgrounds (Haldi yellow, Mehndi green…)")
+        self.theme_backgrounds.setChecked(bool(opts.get("theme_backgrounds", False)))
+        form.addRow("", self.theme_backgrounds)
+
+        # Template theme style: Classic (geometric) or Natural (editorial overlapping).
+        self.theme_style = QComboBox()
+        for label, key in _THEMES:
+            self.theme_style.addItem(label, key)
+        saved_theme = opts.get("theme", "classic")
+        theme_idx = self.theme_style.findData(saved_theme)
+        self.theme_style.setCurrentIndex(theme_idx if theme_idx >= 0 else 0)
+        form.addRow("Layout style:", self.theme_style)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -204,3 +242,14 @@ class AlbumSettingsDialog(QDialog):
     def target_pages(self) -> int:
         """Target album spread count (0 = automatic)."""
         return int(self.target_pages_box.value())
+
+    def layout_options(self) -> dict:
+        """The chosen Phase 3/4 layout feature flags, as orchestrator kwargs."""
+        return {
+            "smart_slot_ordering": self.smart_slot_ordering.isChecked(),
+            "flexible_layout": self.flexible_layout.isChecked(),
+            "use_cutouts": self.use_cutouts.isChecked(),
+            "designed_cover": self.designed_cover.isChecked(),
+            "theme_backgrounds": self.theme_backgrounds.isChecked(),
+            "theme": str(self.theme_style.currentData() or "classic"),
+        }

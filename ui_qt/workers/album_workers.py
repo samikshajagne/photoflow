@@ -38,6 +38,7 @@ class GenerateWorker(QThread):
         cover_title: str = "",
         cover_date: str = "",
         target_pages: int = 0,
+        layout_options: Optional[dict] = None,
         parent: Optional[object] = None,
     ) -> None:
         super().__init__(parent)
@@ -47,6 +48,7 @@ class GenerateWorker(QThread):
         self._cover_title = cover_title
         self._cover_date = cover_date
         self._target_pages = int(target_pages or 0)
+        self._layout_options = dict(layout_options or {})
 
     def run(self) -> None:  # noqa: D401 - QThread entry point
         try:
@@ -61,6 +63,20 @@ class GenerateWorker(QThread):
                 "cover_date": self._cover_date,
                 "progress_cb": lambda msg: self.progress.emit(msg),
             }
+            # Phase 3/4 layout feature flags (smart ordering, cutouts, flexible
+            # layouts, designed cover, themed backgrounds) chosen in the dialog.
+            for key in (
+                "smart_slot_ordering",
+                "use_cutouts",
+                "flexible_layout",
+                "designed_cover",
+                "theme_backgrounds",
+            ):
+                if key in self._layout_options:
+                    kwargs[key] = bool(self._layout_options[key])
+            # Pass the chosen template theme ("classic" or "natural") as a string.
+            if "theme" in self._layout_options:
+                kwargs["theme"] = str(self._layout_options["theme"])
             if self._album_spec is not None:
                 kwargs["album_spec"] = self._album_spec
             project = AlbumOrchestrator(**kwargs).generate(self._folder)

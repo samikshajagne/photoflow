@@ -106,6 +106,7 @@ class AlbumOrchestrator:
         flexible_layout: bool = False,
         designed_cover: bool = False,
         theme_backgrounds: bool = False,
+        theme: str = "classic",
         progress_cb=None,
     ) -> None:
         self._config = config if config is not None else load_config()
@@ -123,6 +124,9 @@ class AlbumOrchestrator:
         self._designed_cover = bool(designed_cover)
         # WS 4.3.3: recolour classified-event sections with a themed background.
         self._theme_backgrounds = bool(theme_backgrounds)
+        # Template style theme: "classic" (geometric) or "natural" (editorial
+        # overlapping layouts reverse-engineered from professional album designs).
+        self._theme = str(theme) if theme else "classic"
         self.album_spec = album_spec or AlbumSpec(
             page_width_in=12, page_height_in=12, dpi=300
         )
@@ -325,6 +329,7 @@ class AlbumOrchestrator:
         album_meta["flexible_layout"] = self._flexible_layout
         album_meta["designed_cover"] = self._designed_cover
         album_meta["theme_backgrounds"] = self._theme_backgrounds
+        album_meta["theme"] = self._theme
         project = AlbumProject.new(source_folder=source, album_spec=album_meta)
 
         # Recover prior manual overrides, then merge caller overrides.
