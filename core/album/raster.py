@@ -144,8 +144,8 @@ def _spread_size(spread: Any) -> tuple[int, int]:
 def _placements(spread: Any) -> list[dict]:
     """
     Normalize a spread's placements to a list of dicts with ``path``,
-    ``frame_px`` and ``crop`` keys, accepting both SpreadRecord (dict
-    placements) and layout ``Spread`` (Placement dataclasses).
+    ``frame_px``, ``crop``, and ``z_index`` keys, accepting both SpreadRecord
+    (dict placements) and layout ``Spread`` (Placement dataclasses).
     """
     out: list[dict] = []
     for p in spread.placements:
@@ -157,6 +157,7 @@ def _placements(spread: Any) -> list[dict]:
                     "crop": tuple(p["crop"]),
                     "fit": p.get("fit", "cover"),
                     "face_boxes": p.get("face_boxes", ()),
+                    "z_index": int(p.get("z_index", 0)),
                 }
             )
         else:  # layout.Placement dataclass
@@ -167,6 +168,7 @@ def _placements(spread: Any) -> list[dict]:
                     "crop": tuple(p.crop),
                     "fit": getattr(p, "fit", "cover"),
                     "face_boxes": getattr(p, "face_boxes", ()),
+                    "z_index": int(getattr(p, "z_index", 0)),
                 }
             )
     return out
@@ -294,7 +296,9 @@ def render_spread(
     """
     width, height = _spread_size(spread)
     canvas = Image.new("RGB", (width, height), background)
-    for pl in _placements(spread):
+    # Sort placements by z_index: background layers drawn first, overlays on top.
+    sorted_placements = sorted(_placements(spread), key=lambda p: p.get("z_index", 0))
+    for pl in sorted_placements:
         fx, fy, fw, fh = (int(round(v)) for v in pl["frame_px"])
         source, recipe = _resolve_source(project, pl["path"])
         if not source.exists():

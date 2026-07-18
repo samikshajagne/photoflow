@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as np
-from PIL import Image, ImageColor, ImageDraw, ImageFilter
+from PIL import Image, ImageColor, ImageDraw, ImageFilter, ImageOps
 
 from core.album.brushmask import brush_mask
 from core.album.facecrop import face_safe_cover_crop
@@ -83,6 +83,11 @@ class TemplateSlot:
     ``rect`` is ``(x, y, w, h)`` in ``[0, 1]`` of the spread's *usable* area
     (inside the safe margin). ``border`` and shadow sizes are given as a
     fraction of the spread's short edge so they are resolution-independent.
+
+    ``z_index`` controls the stacking order of overlapping slots: lower values
+    are rendered first (background), higher values are drawn on top (overlays).
+    Slots with ``z_index > 0`` automatically receive a drop shadow to visually
+    separate them from the background layer beneath.
     """
 
     rect: tuple[float, float, float, float]
@@ -94,6 +99,7 @@ class TemplateSlot:
     shadow: bool = False
     fit: str = FIT_COVER
     use_cutout: bool = False  # WS 3.3.1: feathered face-cutout instead of hard shape clip
+    z_index: int = 0             # stacking order: 0 = background, >0 = overlay layers
 
     def __post_init__(self) -> None:
         if len(self.rect) != 4:
@@ -221,11 +227,23 @@ def render_spread(
     margin = round(spec.margin_in * spec.dpi)
     ux, uy = margin, margin
     uw, uh = max(1, width - 2 * margin), max(1, height - 2 * margin)
-    for i, (slot, image) in enumerate(zip(template.slots, images)):
+    # Sort slots by z_index so lower layers are rendered first, overlays on top.
+    slot_order = sorted(range(n), key=lambda i: template.slots[i].z_index)
+    for i in slot_order:
+        if i >= len(images):
+            continue
+        slot = template.slots[i]
+        image = images[i]
         boxes: FaceBoxes = ()
         if face_boxes_by_index is not None and i < len(face_boxes_by_index):
             boxes = face_boxes_by_index[i] or ()
-        _place_slot(canvas, slot, image, (ux, uy, uw, uh), short_edge, boxes, use_cutout)
+        # Overlay slots (z_index > 0) automatically get a drop shadow to
+        # visually lift them off the background layer beneath.
+        effective_shadow = slot.shadow or slot.z_index > 0
+        _place_slot(
+            canvas, slot, image, (ux, uy, uw, uh), short_edge, boxes, use_cutout,
+            force_shadow=effective_shadow,
+        )
     return canvas.convert("RGB")
 
 
@@ -237,6 +255,7 @@ def _place_slot(
     short_edge: int,
     face_boxes: FaceBoxes = (),
     use_cutout: bool = False,
+    force_shadow: bool = False,
 ) -> None:
     ux, uy, uw, uh = usable
     x = ux + round(slot.rect[0] * uw)
@@ -270,7 +289,7 @@ def _place_slot(
         tile = tile.rotate(slot.rotation_deg, expand=True, resample=Image.BICUBIC)
     cx, cy = x + w // 2, y + h // 2
     px, py = cx - tile.width // 2, cy - tile.height // 2
-    if slot.shadow:
+    if slot.shadow or force_shadow:
         _paste_shadow(canvas, tile, (px, py), short_edge)
     canvas.alpha_composite(tile, (px, py))
 
@@ -428,8 +447,16 @@ def default_templates() -> list[SpreadTemplate]:
     """Built-in ``classic`` theme. Base layouts for 1-6 photos come first (so a
     count maps to a base layout); ``-b`` variants follow to give ``select_template``
     a second option per count. Hero slots of the 3/4/5-photo spreads are
-    ``use_cutout=True`` so the editorial silhouette can be enabled."""
+    ``use_cutout=True`` so the editorial silhouette can be enabled.
+
+    Human-design-inspired templates (``natural-*``) are added based on reverse-
+    engineering of professional wedding album spreads. They use overlapping
+    z_index layers so overlay photos float above full-bleed background photos.
+    """
     return [
+        # ------------------------------------------------------------------ #
+        # Classic theme (original geometric designs)
+        # ------------------------------------------------------------------ #
         SpreadTemplate(name="classic-1", theme=DEFAULT_THEME,
             slots=(_slot((0.05, 0.06, 0.90, 0.88), SHAPE_BRUSH),), background=_BG),
         SpreadTemplate(name="classic-2", theme=DEFAULT_THEME, slots=(
@@ -472,6 +499,70 @@ def default_templates() -> list[SpreadTemplate]:
             _slot((0.52, 0.04, 0.46, 0.44), SHAPE_CIRCLE),
             _slot((0.02, 0.52, 0.46, 0.44), SHAPE_OVAL),
             _slot((0.52, 0.52, 0.46, 0.44), SHAPE_ROUNDED, corner_radius=0.10),
+        ), background=_BG),
+
+        # ------------------------------------------------------------------ #
+        # Natural theme — human-design-inspired overlapping layouts
+        # Reverse-engineered from professional wedding album spreads.
+        # z_index=0: background layers (full bleed, rendered first)
+        # z_index=1: overlay layers (float on top with auto drop-shadow)
+        # ------------------------------------------------------------------ #
+
+        # 1-photo: Full Panoramic — single image across the entire double page.
+        # Seen in 10.9% of human spreads (e.g. spread 13, 23, 33, 43).
+        SpreadTemplate(name="natural-1-panoramic", theme="natural", slots=(
+            TemplateSlot(rect=(0.0, 0.0, 1.0, 1.0), shape=SHAPE_RECT,
+                         border=0.0, shadow=False, z_index=0),
+        ), background=Background(type=BG_SOLID, color="#000000")),
+
+        # 2-photo: Asymmetric Duo — full-bleed background with a floating
+        # portrait/square overlay in the corner (17.4% of human spreads).
+        # Overlay has border + drop shadow to "pop" off the background.
+        SpreadTemplate(name="natural-2-duo", theme="natural", slots=(
+            TemplateSlot(rect=(0.0, 0.0, 1.0, 1.0), shape=SHAPE_RECT,
+                         border=0.0, shadow=False, z_index=0),
+            TemplateSlot(rect=(0.68, 0.62, 0.25, 0.30), shape=SHAPE_ROUNDED,
+                         corner_radius=0.06, border=_BORDER, border_color=_WHITE,
+                         shadow=True, z_index=1),
+        ), background=Background(type=BG_SOLID, color="#111111")),
+
+        # 3-photo: Left Hero + 2 stacked right — the most common editorial look.
+        # Left page: one dominant portrait filling full height.
+        # Right page: two supporting photos stacked vertically.
+        # (Seen in Spreads 12, 25, 40, 46 — 10.9% of human spreads.)
+        SpreadTemplate(name="natural-3-left-hero", theme="natural", slots=(
+            TemplateSlot(rect=(0.0, 0.0, 0.49, 1.0), shape=SHAPE_RECT,
+                         border=0.004, border_color=_WHITE, shadow=False, z_index=0,
+                         use_cutout=True),
+            TemplateSlot(rect=(0.51, 0.02, 0.47, 0.47), shape=SHAPE_RECT,
+                         border=_BORDER, border_color=_WHITE, shadow=True, z_index=0),
+            TemplateSlot(rect=(0.51, 0.51, 0.47, 0.47), shape=SHAPE_RECT,
+                         border=_BORDER, border_color=_WHITE, shadow=True, z_index=0),
+        ), background=_BG),
+
+        # 4-photo: Left Hero + 3 supporting photos on the right.
+        # Left page: full-height hero. Right page: 3 smaller photos.
+        # (Seen in Spreads 10, 27, 32, 36, 37, 44 — 15.2% of human spreads.)
+        SpreadTemplate(name="natural-4-left-hero", theme="natural", slots=(
+            TemplateSlot(rect=(0.0, 0.0, 0.49, 1.0), shape=SHAPE_RECT,
+                         border=0.004, border_color=_WHITE, shadow=False, z_index=0,
+                         use_cutout=True),
+            TemplateSlot(rect=(0.51, 0.02, 0.47, 0.30), shape=SHAPE_RECT,
+                         border=_BORDER, border_color=_WHITE, shadow=True, z_index=0),
+            TemplateSlot(rect=(0.51, 0.35, 0.47, 0.30), shape=SHAPE_RECT,
+                         border=_BORDER, border_color=_WHITE, shadow=True, z_index=0),
+            TemplateSlot(rect=(0.51, 0.68, 0.47, 0.30), shape=SHAPE_RECT,
+                         border=_BORDER, border_color=_WHITE, shadow=True, z_index=0),
+        ), background=_BG),
+
+        # 2-photo: Right Hero Duo — full-bleed left background, portrait hero on right.
+        # Based on asymmetric duo pattern where one large and one medium photo
+        # sit side-by-side with a clear visual weight on the right.
+        SpreadTemplate(name="natural-2-right-hero", theme="natural", slots=(
+            TemplateSlot(rect=(0.0, 0.05, 0.30, 0.90), shape=SHAPE_RECT,
+                         border=_BORDER, border_color=_WHITE, shadow=True, z_index=0),
+            TemplateSlot(rect=(0.32, 0.0, 0.68, 1.0), shape=SHAPE_RECT,
+                         border=0.004, border_color=_WHITE, shadow=False, z_index=0),
         ), background=_BG),
     ]
 

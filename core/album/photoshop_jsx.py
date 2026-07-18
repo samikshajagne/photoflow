@@ -94,8 +94,15 @@ _JSX_TEMPLATE = r"""#target photoshop
             spread.width, spread.height, ALBUM.dpi, name,
             NewDocumentMode.RGB, DocumentFill.WHITE
         );
-        for (var i = 0; i < spread.placements.length; i++) {
-            placePhoto(doc, spread.placements[i]);
+
+        // Sort placements by z_index so background layers are placed first
+        // and overlay frames are composited on top — matching the original design.
+        var sorted = spread.placements.slice().sort(function(a, b) {
+            return (a.zIndex || 0) - (b.zIndex || 0);
+        });
+
+        for (var i = 0; i < sorted.length; i++) {
+            placePhoto(doc, sorted[i]);
         }
         var outFile = new File(outFolder.fsName + "/" + name + ".psd");
         var opts = new PhotoshopSaveOptions();
@@ -151,6 +158,12 @@ _JSX_TEMPLATE = r"""#target photoshop
         }
         addRevealSelectionMask();
         doc.selection.deselect();
+
+        // Overlay layers (z_index > 0) get a Photoshop drop shadow layer effect
+        // so they visually "float" off the background layer beneath them.
+        if (p.zIndex && p.zIndex > 0) {
+            applyDropShadow(layer);
+        }
     }
 
     function addRevealSelectionMask() {
@@ -163,6 +176,28 @@ _JSX_TEMPLATE = r"""#target photoshop
         executeAction(charIDToTypeID("Mk  "), d, DialogModes.NO);
     }
 
+    // Apply a professional drop shadow layer style to an overlay frame.
+    // Shadow: soft, offset 10px down-right, 60% opacity — classic album look.
+    function applyDropShadow(layer) {
+        try {
+            var d = new ActionDescriptor();
+            var fx = new ActionDescriptor();
+            var shadow = new ActionDescriptor();
+            shadow.putBoolean(stringIDToTypeID("enabled"), true);
+            shadow.putDouble(stringIDToTypeID("opacity"), 60.0);
+            shadow.putDouble(stringIDToTypeID("localLightingAngle"), 120.0);
+            shadow.putDouble(stringIDToTypeID("distance"), 10.0);
+            shadow.putDouble(stringIDToTypeID("chokeMatte"), 0.0);
+            shadow.putDouble(stringIDToTypeID("blur"), 18.0);
+            fx.putObject(stringIDToTypeID("dropShadow"), stringIDToTypeID("dropShadow"), shadow);
+            d.putObject(stringIDToTypeID("layerEffects"), stringIDToTypeID("layerEffects"), fx);
+            var ref = new ActionReference();
+            ref.putEnumerated(charIDToTypeID("Lyr "), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
+            d.putReference(charIDToTypeID("null"), ref);
+            executeAction(stringIDToTypeID("set"), d, DialogModes.NO);
+        } catch (e) { /* drop shadow is cosmetic, never abort on failure */ }
+    }
+
     function pad(n) { return (n < 10) ? ("0" + n) : ("" + n); }
 })();
 """
@@ -173,16 +208,22 @@ def build_payload(project: Any) -> dict[str, Any]:
     Build the JSON-able layout payload from an :class:`AlbumProject`.
 
     Returns ``{"dpi", "spreads": [{"index","width","height","placements":[
-    {"path","frameX","frameY","frameW","frameH","cropX","cropY","cropW","cropH"}
-    ]}]}`` with absolute pixel frames and relative crop bounds.
+    {"path","frameX","frameY","frameW","frameH","cropX","cropY","cropW","cropH","zIndex"}
+    ]}]}`` with absolute pixel frames, relative crop bounds, and z-index
+    stacking order for overlay layers.
     """
     spec = getattr(project.meta, "album_spec", None) or {}
     dpi = int(spec.get("dpi", DEFAULT_DPI))
 
     spreads_out: list[dict[str, Any]] = []
     for spread in project.spreads:
+        # Sort placements by z_index so the JSX script can place them in order.
+        placements_sorted = sorted(
+            spread.placements,
+            key=lambda p: int(p.get("z_index", 0)),
+        )
         placements_out: list[dict[str, Any]] = []
-        for placement in spread.placements:
+        for placement in placements_sorted:
             fx, fy, fw, fh = placement["frame_px"]
             cx, cy, cw, ch = placement["crop"]
             placements_out.append(
@@ -196,6 +237,9 @@ def build_payload(project: Any) -> dict[str, Any]:
                     "cropY": float(cy),
                     "cropW": float(cw),
                     "cropH": float(ch),
+                    # zIndex drives layer stacking in the Photoshop JSX builder.
+                    # 0 = background layer, >0 = overlay frame (gets drop shadow).
+                    "zIndex": int(placement.get("z_index", 0)),
                 }
             )
         spreads_out.append(
