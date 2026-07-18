@@ -75,7 +75,7 @@ def test_wizard_bar_busy_disables_cta(qapp):
 
 
 def test_wizard_steps_order():
-    assert [k for k, _ in STEPS] == ["open", "people", "album", "export"]
+    assert [k for k, _ in STEPS] == ["open", "people", "album", "preview", "export"]
 
 
 # --------------------------------------------------------------------------- #
@@ -112,9 +112,9 @@ def test_apply_result_advances_to_people(qapp):
     assert "open" in win._wizard_done
 
 
-def test_present_album_advances_to_export(qapp, tmp_path):
+def test_present_album_advances_to_preview(qapp, tmp_path):
     win = MainWindow()
     win._album_project = AlbumProject.new(str(tmp_path), album_spec={"dpi": 300})
     win._present_album()
-    assert win._wizard_step == "export"
+    assert win._wizard_step == "preview"
     assert {"open", "people", "album"} <= win._wizard_done

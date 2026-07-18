@@ -36,7 +36,7 @@ _PER_SPREAD_BY_KIND: dict[str, int] = {
     "ceremony": 3,    # collage
     "closing": 3,     # collage
 }
-_DEFAULT_PER_SPREAD = 3
+_DEFAULT_PER_SPREAD = 3  # collage default when a section has no explicit count
 
 # Hero sections always get one full-spread photo regardless of density.
 _HERO_KINDS = frozenset({"cover", "couple"})
@@ -74,12 +74,20 @@ class LayoutSelector:
             count. Unknown values fall back to balanced.
     """
 
+    # Auto page budget when the caller doesn't specify one: aim for roughly the
+    # middle of a 20–30 spread album so all photos fit in a reasonable book.
+    AUTO_TARGET_PAGES = 25
+
     def __init__(
         self,
         engine: Optional[AlbumLayoutEngine] = None,
         per_spread_by_kind: Optional[dict[str, int]] = None,
         density: str = DENSITY_BALANCED,
+        target_pages: Optional[int] = None,
     ) -> None:
+        # Page budget: >0 packs all photos into ~that many spreads; None/0 uses
+        # the auto target so albums don't balloon to one photo per spread.
+        self.target_pages = target_pages if (target_pages and target_pages > 0) else None
         self.density = density if density in _DENSITY_MULTIPLIER else DENSITY_BALANCED
         self.engine = engine or AlbumLayoutEngine(
             max_per_spread=_DENSITY_MAX_PER_SPREAD[self.density]
@@ -106,24 +114,63 @@ class LayoutSelector:
             return 1
         return min(max(1, round(count * multiplier)), cap)
 
-    def select(self, project: AlbumProject, spec: AlbumSpec) -> list[SpreadRecord]:
+    def _budget_per_spread(self, project: AlbumProject) -> int:
+        """
+        Photos-per-spread needed to fit all (non-cover) photos into the page
+        budget. Only the cover stays a single-photo spread; every other section
+        packs to this count so a 200+ photo shoot doesn't become 88 spreads.
+        """
+        total = sum(
+            len(s.photos) for s in project.sections if s.kind != "cover" and s.photos
+        )
+        target = self.target_pages or self.AUTO_TARGET_PAGES
+        target = max(1, target - 1)  # reserve the cover spread
+        if total <= 0:
+            return self._default_per_spread
+        per = -(-total // target)  # ceil(total / target)
+        return max(2, per)
+
+    def select(
+        self,
+        project: AlbumProject,
+        spec: AlbumSpec,
+        faces_by_path: Optional[dict[str, tuple[tuple[float, float, float, float], ...]]] = None,
+    ) -> list[SpreadRecord]:
         """
         Lay out every section into spreads and return them, section-tagged.
 
         Spreads are numbered globally in album order. Sections with no
-        placeable photos are skipped.
+        placeable photos are skipped. Photos-per-spread is driven by the page
+        budget (all photos fit in ~``target_pages`` spreads); the cover stays a
+        single full-spread image.
+
+        Args:
+            faces_by_path: Optional ``source_path -> relative face boxes`` map
+                (each box ``(x, y, w, h)`` in ``[0, 1]``). When supplied, faces
+                drive a face-safe cover crop and are stored on each placement so
+                the renderer keeps them visible too. Missing/empty entries fall
+                back to the historical centered crop.
         """
+        faces_by_path = faces_by_path or {}
         spreads: list[SpreadRecord] = []
         global_index = 0
 
+        budget_per = self._budget_per_spread(project)
+        # Let the engine pack up to the budget count per spread.
+        self.engine.max_per_spread = max(self.engine.max_per_spread, budget_per)
+
         for section in project.sections:
             items = [
-                PhotoItem(path=p, aspect_ratio=self._aspect(p), face_boxes=())
+                PhotoItem(
+                    path=p,
+                    aspect_ratio=self._aspect(p),
+                    face_boxes=self._faces_for(p, faces_by_path),
+                )
                 for p in section.photos
             ]
             if not items:
                 continue
-            per = self._per_spread.get(section.kind, self._default_per_spread)
+            per = 1 if section.kind == "cover" else budget_per
             for spread in self.engine.layout(items, spec, per_spread=per):
                 spreads.append(
                     SpreadRecord(
@@ -137,6 +184,9 @@ class LayoutSelector:
                                 "frame_px": list(pl.frame_px),
                                 "crop": list(pl.crop),
                                 "fit": pl.fit,
+                                "face_boxes": [
+                                    list(b) for b in self._faces_for(pl.path, faces_by_path)
+                                ],
                             }
                             for pl in spread.placements
                         ],
@@ -152,13 +202,47 @@ class LayoutSelector:
         return spreads
 
     @staticmethod
+    def _faces_for(
+        path: str,
+        faces_by_path: dict[str, tuple[tuple[float, float, float, float], ...]],
+    ) -> tuple[tuple[float, float, float, float], ...]:
+        """
+        Validated relative face boxes for ``path``.
+
+        Filters to well-formed boxes clamped inside ``[0, 1]`` so a stray
+        detection can never trip :class:`PhotoItem`'s validation and abort layout.
+        """
+        boxes: list[tuple[float, float, float, float]] = []
+        for box in faces_by_path.get(path, ()) or ():
+            try:
+                x, y, w, h = (float(v) for v in box)
+            except (TypeError, ValueError):
+                continue
+            if w <= 0 or h <= 0:
+                continue
+            x = min(max(x, 0.0), 1.0)
+            y = min(max(y, 0.0), 1.0)
+            w = min(w, 1.0 - x)
+            h = min(h, 1.0 - y)
+            if w > 0 and h > 0:
+                boxes.append((x, y, w, h))
+        return tuple(boxes)
+
+    @staticmethod
     def _aspect(path: str) -> float:
-        """Width/height from the image header; falls back to 1.0 if unreadable."""
+        """
+        Width/height from the image header, honoring EXIF orientation, so a
+        portrait photo reports a portrait (<1) aspect even when its pixels are
+        stored landscape with a rotate tag. Falls back to 1.0 if unreadable.
+        """
         try:
             from PIL import Image  # lazy; header read only (no full decode)
 
             with Image.open(path) as img:
                 width, height = img.size
+                orientation = img.getexif().get(0x0112, 1)  # 0x0112 = Orientation
+            if orientation in (5, 6, 7, 8):  # 90°/270° rotations swap the axes
+                width, height = height, width
             if width > 0 and height > 0:
                 return float(width) / float(height)
         except Exception:  # noqa: BLE001 - unreadable -> safe square fallback

@@ -37,7 +37,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Union
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
+
+import dataclasses as _dataclasses
 
 from core.album.template import (
     DEFAULT_THEME,
@@ -45,6 +47,8 @@ from core.album.template import (
     render_spread as _render_template,
     select_template,
 )
+from core.album.theming import dominant_color as _dominant_color, to_hex as _to_hex
+from core.album import textlayer as _textlayer
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -68,8 +72,19 @@ _WHITE = (255, 255, 255)
 ProgressCb = Optional[Callable[[int, int, str], None]]
 
 
+# Source photos are decoded no larger than this on their long edge during
+# render. Full 24MP decodes (×many photos ×many parallel spreads) can exhaust a
+# laptop's RAM; a designed spread never needs more than a few thousand pixels
+# per photo, so this bounds memory with no visible quality loss on album pages.
+_MAX_SOURCE_EDGE_PX: int = 3000
+
+
 def _default_workers() -> int:
-    return max(1, min(8, (os.cpu_count() or 2)))
+    # Deliberately conservative. Rendering a spread holds a large canvas plus
+    # several decoded photos in memory; running many in parallel (old default:
+    # up to 8) can exhaust RAM or overheat a laptop and crash it. Two keeps the
+    # UI responsive while bounding peak memory and CPU heat.
+    return max(1, min(2, (os.cpu_count() or 2)))
 
 
 class AlbumRenderError(Exception):
@@ -141,6 +156,7 @@ def _placements(spread: Any) -> list[dict]:
                     "frame_px": tuple(p["frame_px"]),
                     "crop": tuple(p["crop"]),
                     "fit": p.get("fit", "cover"),
+                    "face_boxes": p.get("face_boxes", ()),
                 }
             )
         else:  # layout.Placement dataclass
@@ -150,15 +166,44 @@ def _placements(spread: Any) -> list[dict]:
                     "frame_px": tuple(p.frame_px),
                     "crop": tuple(p.crop),
                     "fit": getattr(p, "fit", "cover"),
+                    "face_boxes": getattr(p, "face_boxes", ()),
                 }
             )
     return out
 
 
+def _placement_face_boxes(placement: dict) -> tuple[tuple[float, float, float, float], ...]:
+    """Relative face boxes stored on a placement, as a tuple of 4-float tuples."""
+    raw = placement.get("face_boxes") or ()
+    boxes: list[tuple[float, float, float, float]] = []
+    for box in raw:
+        try:
+            x, y, w, h = (float(v) for v in box)
+        except (TypeError, ValueError):
+            continue
+        if w > 0 and h > 0:
+            boxes.append((x, y, w, h))
+    return tuple(boxes)
+
+
 def _load_rgb(source: Path, recipe: Optional[dict], apply_edits: bool) -> Image.Image:
-    """Open ``source`` as an RGB Pillow image, optionally applying tonal edits."""
+    """
+    Open ``source`` as an RGB Pillow image, downscaled to bound memory, with
+    tonal edits optionally applied.
+
+    ``draft`` gives the JPEG decoder a fast size hint; ``thumbnail`` then
+    enforces the cap for any format. This keeps peak memory low so exports don't
+    exhaust RAM on large shoots.
+    """
     img = Image.open(source)
+    try:
+        img.draft("RGB", (_MAX_SOURCE_EDGE_PX, _MAX_SOURCE_EDGE_PX))  # fast JPEG downscale hint
+    except Exception:  # noqa: BLE001 - draft is best-effort (non-JPEG etc.)
+        pass
+    img = ImageOps.exif_transpose(img)  # honor camera orientation (fix sideways photos)
     img = img.convert("RGB")
+    if max(img.size) > _MAX_SOURCE_EDGE_PX:
+        img.thumbnail((_MAX_SOURCE_EDGE_PX, _MAX_SOURCE_EDGE_PX), Image.LANCZOS)
     if apply_edits and recipe:
         arr = _apply_tone(np.asarray(img), recipe)
         img = Image.fromarray(arr, mode="RGB")
@@ -305,12 +350,292 @@ def _album_theme(project: Any) -> str:
     return raw.get("theme") or DEFAULT_THEME
 
 
+def _cover_meta(project: Any) -> tuple[str, str]:
+    """The couple title + date for the cover (stored on the project meta)."""
+    meta = getattr(project, "meta", None)
+    raw = dict(getattr(meta, "album_spec", {}) or {})
+    return str(raw.get("cover_title") or ""), str(raw.get("cover_date") or "")
+
+
+def _album_flags(project: Any) -> tuple[bool, bool]:
+    """
+    Read WS 3.4.2 album-layout feature flags from the project's album_spec.
+
+    Returns ``(smart_slot_ordering, use_cutouts)``.
+
+    Both flags live in the ``album_spec`` meta dict — the same store as
+    ``theme``, ``cover_title``, and ``cover_date`` — so they round-trip through
+    the manifest without touching the strict YAML config validator.
+
+    - ``smart_slot_ordering`` (default ``True``): enable WS 3.2 subject-aware
+      photo→slot assignment.  Set to ``False`` to revert to the legacy
+      aspect-ratio-only sort.
+    - ``use_cutouts`` (default ``False``): enable WS 3.3.1 feathered face
+      cutouts on slots authored with ``use_cutout=True``. Opt-in because the
+      effect is prominent; the photographer turns it on when they want it.
+    """
+    try:
+        meta = getattr(project, "meta", None)
+        raw = dict(getattr(meta, "album_spec", {}) or {})
+        smart = bool(raw.get("smart_slot_ordering", True))
+        cutouts = bool(raw.get("use_cutouts", False))
+        return smart, cutouts
+    except Exception:  # noqa: BLE001 - a bad meta must never break rendering
+        return True, False
+
+
+def _flexible_flag(project: Any) -> bool:
+    """
+    WS 4.1 opt-in flag: when ``flexible_layout`` is set in the album_spec meta,
+    each spread adapts its slot *types* to its photos (via
+    :func:`core.album.flexible_render.flexible_template_for`) instead of using a
+    fixed count-based template. Default ``False`` (fixed templates).
+    """
+    try:
+        meta = getattr(project, "meta", None)
+        raw = dict(getattr(meta, "album_spec", {}) or {})
+        return bool(raw.get("flexible_layout", False))
+    except Exception:  # noqa: BLE001 - a bad meta must never break rendering
+        return False
+
+
+def _designed_cover_flag(project: Any) -> bool:
+    """
+    WS 4.4 opt-in flag: when ``designed_cover`` is set, the Cover spread is
+    composed by :func:`core.album.cover_designer.generate_cover` (hero cutout +
+    names + date + tagline on a themed background) instead of a plain captioned
+    photo. Default ``False``.
+    """
+    try:
+        meta = getattr(project, "meta", None)
+        raw = dict(getattr(meta, "album_spec", {}) or {})
+        return bool(raw.get("designed_cover", False))
+    except Exception:  # noqa: BLE001 - a bad meta must never break rendering
+        return False
+
+
+def _theme_backgrounds_flag(project: Any) -> bool:
+    """
+    WS 4.3.3 opt-in flag: when ``theme_backgrounds`` is set, a section whose
+    photos classify as a known event (Haldi/Mehndi/Baraat/Reception) is given
+    that event's canonical themed background tint + accent instead of the raw
+    sampled colour. Default ``False``.
+    """
+    try:
+        meta = getattr(project, "meta", None)
+        raw = dict(getattr(meta, "album_spec", {}) or {})
+        return bool(raw.get("theme_backgrounds", False))
+    except Exception:  # noqa: BLE001 - a bad meta must never break rendering
+        return False
+
+
+def _section_theme_color(project: Any, spread: Any) -> Optional[tuple[int, int, int]]:
+    """
+    The mood colour for a spread's *section*, computed once and reused so every
+    spread in the same section shares one background (a coherent per-event
+    look). Returns ``None`` when the section has no readable photos.
+    """
+    section = getattr(spread, "section", None) or ""
+    cache = getattr(project, "_section_theme_cache", None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(project, "_section_theme_cache", cache)
+        except Exception:  # noqa: BLE001 - some projects may reject new attrs
+            pass
+    if section in cache:
+        return cache[section]
+
+    paths: list[str] = []
+    for s in getattr(project, "spreads", []) or []:
+        if (getattr(s, "section", None) or "") == section:
+            paths.extend(pl["path"] for pl in _placements(s))
+
+    def _open(path: str) -> Optional[Image.Image]:
+        source, _recipe = _resolve_source(project, path)
+        if not source.exists():
+            return None
+        try:
+            img = Image.open(source)
+            # Cap size to a small thumbnail -- dominant_color only needs 48×48.
+            # Avoids loading full 24 MP photos just to compute a background tint.
+            img.thumbnail((_MAX_SOURCE_EDGE_PX, _MAX_SOURCE_EDGE_PX), Image.BILINEAR)
+            return ImageOps.exif_transpose(img).convert("RGB")
+        except Exception:  # noqa: BLE001 - unreadable photo doesn't vote
+            return None
+
+    color = _dominant_color(paths, loader=_open) if paths else None
+    cache[section] = color
+    return color
+
+
+def _photo_aspect(path: str) -> float:
+    """Header-only width/height honoring EXIF orientation (1.0 if unreadable)."""
+    try:
+        with Image.open(path) as img:
+            w, h = img.size
+            orientation = img.getexif().get(0x0112, 1)
+        if orientation in (5, 6, 7, 8):  # 90°/270° rotations swap the axes
+            w, h = h, w
+        if w > 0 and h > 0:
+            return float(w) / float(h)
+    except Exception:  # noqa: BLE001 - unreadable -> treat as square
+        pass
+    return 1.0
+
+
+def _order_by_slot_aspect(paths: list[str], template: Any, width: int, height: int) -> list[str]:
+    """
+    Reorder ``paths`` so each photo lands in the slot whose aspect best matches
+    its orientation (portrait photo -> tall slot, landscape -> wide slot).
+
+    Pairs the tallest photo with the tallest slot, next with next, and so on
+    (sorting both by aspect and zipping), which minimizes how much any photo
+    must be cropped to fill its slot. Extra photos beyond the slot count keep
+    their order.
+
+    This is the fallback when subject-aware matching is disabled or unavailable.
+    """
+    slots = template.slots
+    n = min(len(paths), len(slots))
+    if n <= 1:
+        return paths
+    slot_aspect = [
+        (s.rect[2] * width) / max(1e-6, s.rect[3] * height) for s in slots[:n]
+    ]
+    photo_aspect = [_photo_aspect(p) for p in paths[:n]]
+    slot_order = sorted(range(n), key=lambda i: slot_aspect[i])   # tall -> wide
+    photo_order = sorted(range(n), key=lambda i: photo_aspect[i])
+    result: list[Optional[str]] = [None] * n
+    for k in range(n):
+        result[slot_order[k]] = paths[photo_order[k]]
+    return [p for p in result if p is not None] + list(paths[n:])
+
+
+def _order_by_content(
+    paths: list[str],
+    template: Any,
+    width: int,
+    height: int,
+    faces_by_path: dict,
+) -> list[str]:
+    """
+    Subject-aware photo ordering: assign each photo to the slot that best fits
+    its *composition* (portrait / group / detail / landscape) using WS 3.2's
+    :func:`~core.album.slot_matcher.match_photos_to_slots`.
+
+    Each photo is characterised by
+    :func:`~core.content_analyzer.analyze` (face count, composition type,
+    aspect) and each template slot by a :class:`~core.album.slot_matcher.SlotProfile`
+    derived from its aspect and size. The Hungarian/greedy solver picks the
+    global-optimum photo→slot assignment so a portrait photo (large face,
+    tall frame) lands in the tall portrait slot and a detail close-up lands
+    in the small accent slot.
+
+    Falls back to :func:`_order_by_slot_aspect` on any import/solver failure.
+    """
+    n = min(len(paths), len(template.slots))
+    if n <= 1:
+        return paths
+    try:
+        from core.content_analyzer import analyze as _analyze
+        from core.album.slot_matcher import SlotProfile, match_photos_to_slots
+
+        # Build a SlotProfile for each template slot from its pixel aspect ratio.
+        slot_profiles = []
+        for s in template.slots[:n]:
+            slot_w = s.rect[2] * width
+            slot_h = s.rect[3] * height
+            slot_ar = slot_w / max(1e-6, slot_h)
+            # Infer the slot's preferred composition from its aspect ratio:
+            # tall (< 0.8) -> portrait/full_body; wide (> 1.4) -> landscape/group;
+            # square-ish -> detail/environmental.
+            if slot_ar < 0.8:
+                ideal = ("portrait", "full_body")
+                face_range = (1, 2)
+            elif slot_ar > 1.4:
+                ideal = ("group", "landscape", "large_group")
+                face_range = (0, 8)
+            else:
+                ideal = ("detail", "environmental", "group")
+                face_range = (0, 4)
+            slot_profiles.append(
+                SlotProfile(
+                    name=f"slot_{len(slot_profiles)}",
+                    aspect_ratio=slot_ar,
+                    ideal_composition=ideal,
+                    ideal_face_count=face_range,
+                )
+            )
+
+        # Build PhotoContent for each photo using its face boxes + aspect.
+        contents = [
+            _analyze(
+                _photo_aspect(p),
+                faces_by_path.get(p, ()),
+            )
+            for p in paths[:n]
+        ]
+
+        assignment = match_photos_to_slots(contents, slot_profiles)
+        # assignment = {slot_index: photo_index}. Build the reordered path list.
+        result: list[Optional[str]] = [None] * n
+        for slot_i, photo_i in assignment.items():
+            if 0 <= slot_i < n and 0 <= photo_i < n:
+                result[slot_i] = paths[photo_i]
+        # Fill any unassigned slots in order from the remaining photos.
+        used = set(assignment.values())
+        remaining = [paths[i] for i in range(n) if i not in used]
+        for idx in range(n):
+            if result[idx] is None and remaining:
+                result[idx] = remaining.pop(0)
+        ordered = [p for p in result if p is not None]
+        if len(ordered) == n:
+            return ordered + list(paths[n:])
+    except Exception:  # noqa: BLE001 - matcher unavailable -> silent fallback
+        pass
+    return _order_by_slot_aspect(paths, template, width, height)
+
+
+# Target long-edge (px) for on-screen preview spreads: big enough to judge the
+# layout, small enough to render ~instantly and use little memory.
+PREVIEW_LONG_EDGE_PX: int = 1100
+
+
+def preview_spec(spec: Any, long_edge_px: int = PREVIEW_LONG_EDGE_PX) -> Any:
+    """
+    A low-resolution copy of ``spec`` (same page size/shape) for fast preview
+    rendering. The album's photo grouping is resolution-independent, so a spread
+    previewed with this spec looks like what will be exported at full DPI.
+    """
+    import dataclasses as _dc
+
+    long_in = max(spec.spread_width_in, spec.spread_height_in) or 1.0
+    dpi = max(24, min(int(spec.dpi), round(long_edge_px / long_in)))
+    return _dc.replace(spec, dpi=dpi)
+
+
+def _is_section_opener(project: Any, spread: Any) -> bool:
+    """True if ``spread`` is the first (lowest-index) spread of its section."""
+    section = getattr(spread, "section", None) or ""
+    idx = getattr(spread, "index", None)
+    if idx is None:
+        return False
+    indices = [
+        getattr(s, "index", 0)
+        for s in getattr(project, "spreads", []) or []
+        if (getattr(s, "section", None) or "") == section
+    ]
+    return bool(indices) and idx == min(indices)
+
+
 def render_spread_template(
     project: Any,
     spread: Any,
     apply_edits: bool = True,
     background: tuple[int, int, int] = _WHITE,
     skipped: Optional[list] = None,
+    spec: Any = None,
 ) -> Image.Image:
     """
     Render one spread through the designed-template engine
@@ -322,32 +647,191 @@ def render_spread_template(
     edits and the retouched-``linked_path`` round-trip are honoured via the same
     resolver as :func:`render_spread`. Missing/unreadable photos are recorded in
     ``skipped`` and rendered as the background colour (never abort the album).
+
+    Pass ``spec`` (an :class:`~core.album.layout.AlbumSpec`) to render at that
+    canvas size regardless of the spread's stored pixel size — used to render a
+    fast, lower-resolution preview of the same content that will be exported.
+
+    Two album-spec flags (WS 3.4.2) control advanced layout behaviour:
+
+    - ``smart_slot_ordering`` (bool, default ``True``): when enabled, uses
+      :mod:`core.album.slot_matcher` to assign each photo to the slot that
+      best matches its composition (portrait -> tall slot, group -> wide slot,
+      detail -> small square). Falls back to aspect-only sorting on failure.
+    - ``use_cutouts`` (bool, default ``False``): when enabled, slots authored
+      with ``use_cutout=True`` get a feathered head-and-shoulders alpha cutout
+      (WS 3.3.1) instead of a hard shape mask, giving the editorial silhouette
+      look. Requires a usable face box; slots fall back silently.
     """
-    width, height = _spread_size(spread)
-    paths = [pl["path"] for pl in _placements(spread)]
+    if spec is not None:
+        width, height = spec.spread_width_px, spec.spread_height_px
+    else:
+        width, height = _spread_size(spread)
+    placements = _placements(spread)
+    paths = [pl["path"] for pl in placements]
     if not paths:
         return Image.new("RGB", (width, height), background)
 
-    spec = _album_spec_for(project, width, height)
-    template = select_template(default_templates(), len(paths), _album_theme(project))
+    # Relative face boxes per photo (stored on the placement at layout time). Used
+    # below to keep faces inside each cover-fit slot instead of centre-cropping.
+    faces_by_path = {pl["path"]: _placement_face_boxes(pl) for pl in placements}
+
+    if spec is None:
+        spec = _album_spec_for(project, width, height)
+    # Rotate template variants by spread index so consecutive spreads differ.
+    variant = int(getattr(spread, "index", 0) or 0)
+    template = select_template(default_templates(), len(paths), _album_theme(project), variant=variant)
+
+    # WS 4.1: when flexible layouts are enabled, replace the fixed template with
+    # one whose slot *types* were chosen to fit this spread's photos. Falls back
+    # to the fixed template above when the flexible engine returns None.
+    if _flexible_flag(project):
+        from core.album.flexible_render import flexible_template_for
+
+        flexible = flexible_template_for(
+            paths, faces_by_path, _album_theme(project), aspect_fn=_photo_aspect
+        )
+        if flexible is not None:
+            template = flexible
+
+    # Read album-level behaviour flags (WS 3.4.2).
+    smart_ordering, use_cutouts = _album_flags(project)
+
+    # Order photos into slots: subject-aware when enabled (WS 3.2), else aspect-only.
+    if smart_ordering:
+        paths = _order_by_content(paths, template, width, height, faces_by_path)
+    else:
+        paths = _order_by_slot_aspect(paths, template, width, height)
+    # Face boxes must follow the reordered paths so each slot gets its photo's faces.
+    face_boxes_by_index = [faces_by_path.get(p, ()) for p in paths]
+
+    # Give every spread in this section the same background, tinted from the
+    # section's photos, for a coherent per-event colour mood.
+    section_color = _section_theme_color(project, spread)
+    theme_accent: Optional[tuple[int, int, int]] = None
+    if section_color is not None:
+        bg_color = section_color
+        # WS 4.3.3: for a confidently-classified event (Haldi/Mehndi/Baraat/
+        # Reception) use its canonical themed tint + accent instead of the raw
+        # sampled colour. Falls back to the sampled tint otherwise.
+        if _theme_backgrounds_flag(project):
+            try:
+                from core.album.event_theme import themed_background
+
+                themed = themed_background(section_color)
+                if themed is not None:
+                    bg_color, theme_accent = themed
+            except Exception:  # noqa: BLE001 - theming must never break rendering
+                pass
+        bg = _dataclasses.replace(template.background, color=_to_hex(bg_color))
+        template = _dataclasses.replace(template, background=bg)
+
+    # Auto black-and-white: on richer spreads, render one accent slot (the last)
+    # in greyscale for contrast, like a designed album. Slots load in order, so
+    # a per-call counter maps to the slot index.
+    bw_index = len(paths) - 1 if len(paths) >= 3 else None
+    state = {"i": -1}
 
     def loader(path: str) -> Image.Image:
+        state["i"] += 1
         source, recipe = _resolve_source(project, path)
         if not source.exists():
             logger.warning("Render(template): source missing, skipping: %s", source)
             _record_skip(skipped, path)
             return Image.new("RGB", (1200, 1200), background)
         try:
-            return _load_rgb(source, recipe, apply_edits)
+            img = _load_rgb(source, recipe, apply_edits)
         except Exception as exc:  # noqa: BLE001 - one bad asset must not abort
             logger.warning("Render(template): failed on '%s': %s", source, exc)
             _record_skip(skipped, path)
             return Image.new("RGB", (1200, 1200), background)
+        if state["i"] == bw_index:
+            img = ImageOps.grayscale(img).convert("RGB")
+        return img
 
-    img = _render_template(template, paths, spec, loader=loader)
+    # WS 4.4: designed cover — compose the Cover spread (hero cutout + names +
+    # date + tagline on a themed background) instead of a plain captioned photo.
+    if _designed_cover_flag(project) and (getattr(spread, "section", "") or "").lower() == "cover":
+        cover = _designed_cover(
+            project, paths, faces_by_path, section_color, width, height, apply_edits
+        )
+        if cover is not None:
+            return cover
+
+    img = _render_template(
+        template, paths, spec, loader=loader, face_boxes_by_index=face_boxes_by_index,
+        use_cutout=use_cutouts,
+    )
     if img.size != (width, height):
         img = img.resize((width, height), Image.LANCZOS)
+
+    # Caption the section's opening spread: the Cover gets the couple's names +
+    # date; every other section gets its title + a curated quote.
+    if _is_section_opener(project, spread):
+        section = getattr(spread, "section", None) or ""
+        # Prefer the themed accent (WS 4.3.3) when one was chosen for this section.
+        if theme_accent is not None:
+            accent = theme_accent
+        elif section_color is not None:
+            accent = tuple(max(0, int(c * 0.5)) for c in section_color)
+        else:
+            accent = (150, 40, 40)
+        if section.lower() == "cover":
+            title, date = _cover_meta(project)
+            if title:  # only if the photographer supplied names
+                img = _textlayer.draw_cover(
+                    img, title, date, subtitle="A Successful Love Story", accent=accent
+                )
+        elif section:
+            img = _textlayer.draw_caption(
+                img,
+                _textlayer.title_for_section(section),
+                _textlayer.pick_quote(section),
+                accent=accent,
+            )
     return img
+
+
+def _designed_cover(
+    project: Any,
+    paths: list[str],
+    faces_by_path: dict,
+    section_color: Optional[tuple[int, int, int]],
+    width: int,
+    height: int,
+    apply_edits: bool,
+) -> Optional[Image.Image]:
+    """
+    Compose the Cover spread via :func:`core.album.cover_designer.generate_cover`,
+    or ``None`` on any failure so the caller falls back to the normal render.
+    """
+    if not paths:
+        return None
+    try:
+        from core.album.cover_designer import generate_cover
+
+        title, date = _cover_meta(project)
+        hero = paths[0]
+        source, recipe = _resolve_source(project, hero)
+        if not source.exists():
+            return None
+
+        def _loader(_p: str) -> Image.Image:
+            return _load_rgb(source, recipe, apply_edits).convert("RGBA")
+
+        theme = section_color or (150, 40, 40)
+        return generate_cover(
+            hero,
+            title or "",
+            date,
+            theme_color=theme,
+            size=(width, height),
+            face_boxes=faces_by_path.get(hero, ()),
+            loader=_loader,
+        )
+    except Exception as exc:  # noqa: BLE001 - never break the album on the cover
+        logger.warning("Designed cover failed (%s); using standard cover.", exc)
+        return None
 
 
 def _record_skip(skipped: Optional[list], path: str) -> None:
@@ -447,6 +931,7 @@ def _render_spread_files(
     dpi = _dpi(project)
     spreads = _spreads(project)
     total = len(spreads)
+    logger.info("%s: rendering %d spread(s)…", label, total)
     workers = max(1, int(max_workers or 1))
     lock = threading.Lock()
     results: dict[int, Path] = {}
@@ -481,6 +966,8 @@ def _render_spread_files(
         done += 1
         if progress_cb is not None:
             progress_cb(done, total, f"{label} {done}/{total}")
+        if done == 1 or done % 5 == 0 or done == total:
+            logger.info("%s %d/%d…", label, done, total)
 
     if workers <= 1:
         for item in items:

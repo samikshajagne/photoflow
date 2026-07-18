@@ -47,6 +47,7 @@ from core.album.project import (
     PhotoRecord,
 )
 from core.album.story import StoryBuilder
+from core.album.theming import classify_event_name, dominant_color
 from core.auto_edit import AutoEditError, AutoEditor
 from core.person_cluster import FaceRef, PersonClusterer
 from core.organizer import (
@@ -98,8 +99,30 @@ class AlbumOrchestrator:
         face_detector=None,
         embedder=None,
         clusterer: Optional[PersonClusterer] = None,
+        cover_title: str = "",
+        cover_date: str = "",
+        smart_slot_ordering: bool = True,
+        use_cutouts: bool = False,
+        flexible_layout: bool = False,
+        designed_cover: bool = False,
+        theme_backgrounds: bool = False,
+        progress_cb=None,
     ) -> None:
         self._config = config if config is not None else load_config()
+        # Cover text (couple names + date) printed on the album's Cover spread.
+        self._cover_title = cover_title or ""
+        self._cover_date = cover_date or ""
+        # WS 3.4.2 album-layout feature flags.
+        # smart_slot_ordering: use WS 3.2 composition-aware photo→slot matching.
+        # use_cutouts: enable WS 3.3.1 feathered face cutouts on hero slots.
+        self._smart_slot_ordering = bool(smart_slot_ordering)
+        self._use_cutouts = bool(use_cutouts)
+        # WS 4.1: adapt each spread's slot types to its photos (opt-in).
+        self._flexible_layout = bool(flexible_layout)
+        # WS 4.4: compose the Cover spread with the cover designer (opt-in).
+        self._designed_cover = bool(designed_cover)
+        # WS 4.3.3: recolour classified-event sections with a themed background.
+        self._theme_backgrounds = bool(theme_backgrounds)
         self.album_spec = album_spec or AlbumSpec(
             page_width_in=12, page_height_in=12, dpi=300
         )
@@ -114,6 +137,9 @@ class AlbumOrchestrator:
         self._face_detector = face_detector
         self._embedder = embedder
         self._clusterer = clusterer or PersonClusterer()
+        # Optional callable(str) for live progress reporting to the UI.
+        # Called at the start of each stage with a short human-readable label.
+        self._progress_cb = progress_cb
 
     @classmethod
     def from_config(cls, config=None, **kwargs) -> "AlbumOrchestrator":
@@ -158,18 +184,27 @@ class AlbumOrchestrator:
 
         # Step: auto-edit recipes for the candidate pool (cached per file).
         if apply_auto_edit:
+            self._report_progress(f"Auto-editing {len(candidates)} candidate(s)…")
             self._apply_auto_edit(candidates, cache)
 
         # Step: event segmentation (classification/naming arrives in Phase 3).
+        self._report_progress("Building event timeline…")
         project.events = self._build_events([r.source_path for r in candidates])
 
         # Step: story sections (identity-free).
+        self._report_progress("Assembling story sections…")
         project.sections = self.story_builder.build(project)
 
-        # Step: layout selection -> spreads.
-        project.spreads = self.layout_selector.select(project, self.album_spec)
+        # Step: layout selection -> spreads. Feed cached face boxes so the crop
+        # keeps faces visible and the renderer can honour them (see WS 3.1).
+        self._report_progress("Selecting layouts…")
+        faces_by_path = self._faces_by_path(candidates, cache)
+        project.spreads = self.layout_selector.select(
+            project, self.album_spec, faces_by_path=faces_by_path
+        )
 
         # Step: export.
+        self._report_progress("Writing album manifest…")
         project.export.retouch_needed = [
             r.source_path for r in candidates if r.faces_detected
         ]
@@ -272,18 +307,38 @@ class AlbumOrchestrator:
         out_dir = Path(output_dir) if output_dir is not None else source / DEFAULT_ALBUM_DIR
         cache = AnalysisCache(out_dir / CACHE_FILENAME)
 
+        self._report_progress("Scanning photos…")
         paths = [str(p) for p in self._scanner.scan(source)]
 
-        project = AlbumProject.new(
-            source_folder=source, album_spec=dataclasses.asdict(self.album_spec)
-        )
+        # The album spec dict also carries cover text so the renderer can print
+        # the couple's names + date on the Cover spread, and WS 3.4.2 feature
+        # flags so the render path can read them from the manifest.
+        album_meta = dataclasses.asdict(self.album_spec)
+        if self._cover_title:
+            album_meta["cover_title"] = self._cover_title
+        if self._cover_date:
+            album_meta["cover_date"] = self._cover_date
+        # Always write the flags so the manifest is the authoritative source;
+        # the render path reads them back via _album_flags().
+        album_meta["smart_slot_ordering"] = self._smart_slot_ordering
+        album_meta["use_cutouts"] = self._use_cutouts
+        album_meta["flexible_layout"] = self._flexible_layout
+        album_meta["designed_cover"] = self._designed_cover
+        album_meta["theme_backgrounds"] = self._theme_backgrounds
+        project = AlbumProject.new(source_folder=source, album_spec=album_meta)
 
         # Recover prior manual overrides, then merge caller overrides.
         merged_overrides = self._load_prior_overrides(out_dir)
         if overrides:
             merged_overrides.update(dict(overrides))
 
-        # Analysis (cache or pipeline).
+        # Analysis (cache or pipeline). Report whether we're using the cache.
+        n = len(paths)
+        cached_all = not reanalyze and paths and cache.all_valid("quality", paths)
+        if cached_all:
+            self._report_progress(f"Loading cached analysis for {n} photo(s)…")
+        else:
+            self._report_progress(f"Analyzing {n} photo(s) (blur, faces, quality)…")
         records = self._analyze(source, paths, cache, reanalyze)
         for rec in records:
             project.add_photo(rec)
@@ -297,6 +352,7 @@ class AlbumOrchestrator:
         # Identity (detect -> embed -> cluster). Degrades to no clusters when no
         # model is available. Labels from a prior run are re-bound by centroid
         # so the photographer's labelling survives re-analysis.
+        self._report_progress(f"Clustering faces across {len(candidates)} candidate(s)…")
         project.clusters = self._run_identity(candidates, cache)
         self._rebind_labels(project, self._load_prior_clusters(out_dir))
         return project, out_dir, cache, candidates
@@ -377,7 +433,13 @@ class AlbumOrchestrator:
             return []
 
         refs: list[FaceRef] = []
-        for rec in candidates:
+        total = len(candidates)
+        logger.info("Identity: embedding faces across %d candidate(s)…", total)
+        self._report_progress(f"Embedding faces in {total} photo(s)…")
+        for done, rec in enumerate(candidates, start=1):
+            if done == 1 or done % 10 == 0 or done == total:
+                logger.info("Identity: embedded %d/%d photo(s)…", done, total)
+                self._report_progress(f"Embedding faces {done}/{total}…")
             path = rec.source_path
             # Reuse the face regions cached during analysis (the "faces"
             # namespace written by the pipeline) instead of re-detecting.
@@ -502,16 +564,49 @@ class AlbumOrchestrator:
         return vec if norm == 0.0 else vec / norm
 
     @staticmethod
+    def _faces_by_path(candidates, cache) -> dict:
+        """
+        ``source_path -> relative face boxes`` for the candidate pool, read from
+        the analysis cache's ``faces`` namespace (populated during the pipeline).
+
+        Boxes are already relative ``(x, y, w, h)`` in ``[0, 1]``. Photos with no
+        cached faces are omitted, so layout simply falls back to a centered crop.
+        """
+        faces: dict[str, tuple[tuple[float, float, float, float], ...]] = {}
+        if cache is None:
+            return faces
+        for record in candidates:
+            path = record.source_path
+            try:
+                regions = cache.get("faces", path)
+            except Exception:  # noqa: BLE001 - a cache miss must never break layout
+                regions = None
+            if not regions:
+                continue
+            boxes = tuple(
+                tuple(float(v) for v in box) for box in regions if len(box) == 4
+            )
+            if boxes:
+                faces[path] = boxes
+        return faces
+
+    @staticmethod
     def _build_events(paths: list[str]) -> list[EventRecord]:
         if not paths:
             return []
         timeline = build_timeline(paths)
         events: list[EventRecord] = []
         for seg in segment_events(timeline):
+            # Best-effort colour-based name (e.g. "Haldi"); falls back to the
+            # chronological label when the event isn't confidently classifiable.
+            try:
+                name = classify_event_name(dominant_color(list(seg.photos)))
+            except Exception:  # noqa: BLE001 - naming must never break generation
+                name = None
             events.append(
                 EventRecord(
                     index=seg.index,
-                    name=f"Event {seg.index + 1}",  # named/classified in Phase 3
+                    name=name or f"Event {seg.index + 1}",
                     photos=list(seg.photos),
                     start=seg.start.isoformat(),
                     end=seg.end.isoformat(),
@@ -534,13 +629,16 @@ class AlbumOrchestrator:
     def _get_pipeline(self) -> PhotoFlowPipeline:
         if self._pipeline is None:
             pipeline = PhotoFlowPipeline.from_config(self._config)
-            # Share ONE face detector between the pipeline's quality stage and
-            # the identity stage. The pipeline writes its detections to the
-            # "faces" cache, which the identity stage then reuses — so faces are
-            # detected exactly once per photo instead of twice. Only applied to
-            # a pipeline we build ourselves (an injected pipeline is left as-is).
             detector = self._identity_detector()
             if detector is not None:
                 pipeline.face_detector = detector
             self._pipeline = pipeline
         return self._pipeline
+
+    def _report_progress(self, message: str) -> None:
+        """Emit a progress stage label to the UI callback, if one was given."""
+        if self._progress_cb is not None:
+            try:
+                self._progress_cb(message)
+            except Exception:  # noqa: BLE001 - progress reporting must never crash analysis
+                pass

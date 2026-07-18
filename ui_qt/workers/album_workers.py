@@ -28,25 +28,39 @@ class GenerateWorker(QThread):
 
     succeeded = pyqtSignal(object)  # AlbumProject
     failed = pyqtSignal(str)
+    progress = pyqtSignal(str)  # current stage label
 
     def __init__(
         self,
         folder: str,
         album_spec: object = None,
         density: str = "balanced",
+        cover_title: str = "",
+        cover_date: str = "",
+        target_pages: int = 0,
         parent: Optional[object] = None,
     ) -> None:
         super().__init__(parent)
         self._folder = str(folder)
         self._album_spec = album_spec
         self._density = density
+        self._cover_title = cover_title
+        self._cover_date = cover_date
+        self._target_pages = int(target_pages or 0)
 
     def run(self) -> None:  # noqa: D401 - QThread entry point
         try:
             from core.album.layout_select import LayoutSelector
             from core.album.orchestrator import AlbumOrchestrator
 
-            kwargs: dict = {"layout_selector": LayoutSelector(density=self._density)}
+            kwargs: dict = {
+                "layout_selector": LayoutSelector(
+                    density=self._density, target_pages=self._target_pages
+                ),
+                "cover_title": self._cover_title,
+                "cover_date": self._cover_date,
+                "progress_cb": lambda msg: self.progress.emit(msg),
+            }
             if self._album_spec is not None:
                 kwargs["album_spec"] = self._album_spec
             project = AlbumOrchestrator(**kwargs).generate(self._folder)
@@ -68,6 +82,7 @@ class PreparePeopleWorker(QThread):
 
     succeeded = pyqtSignal(object)  # AlbumProject (photos + clusters, no layout)
     failed = pyqtSignal(str)
+    progress = pyqtSignal(str)  # current stage label
 
     def __init__(self, folder: str, parent: Optional[object] = None) -> None:
         super().__init__(parent)
@@ -77,7 +92,9 @@ class PreparePeopleWorker(QThread):
         try:
             from core.album.orchestrator import AlbumOrchestrator
 
-            project = AlbumOrchestrator().prepare_people(self._folder)
+            project = AlbumOrchestrator(
+                progress_cb=lambda msg: self.progress.emit(msg)
+            ).prepare_people(self._folder)
         except Exception as exc:  # noqa: BLE001 - report any failure to the UI
             logger.exception("Preparing people failed.")
             self.failed.emit(str(exc))

@@ -35,7 +35,12 @@ from typing import Any, Callable, Optional, Sequence, Union
 import numpy as np
 from PIL import Image, ImageColor, ImageDraw, ImageFilter
 
+from core.album.brushmask import brush_mask
+from core.album.facecrop import face_safe_cover_crop
 from core.album.layout import AlbumSpec
+
+# A relative face box (x, y, w, h) in [0, 1] of the source image.
+FaceBoxes = Sequence[tuple[float, float, float, float]]
 
 PathLike = Union[str, Path]
 
@@ -45,7 +50,10 @@ SHAPE_ROUNDED = "rounded"
 SHAPE_CIRCLE = "circle"   # true circle inscribed in the slot (uses min edge)
 SHAPE_OVAL = "oval"       # ellipse filling the slot rect
 SHAPE_DIAMOND = "diamond"  # 4-point polygon (rotated square feel)
-SHAPES = frozenset({SHAPE_RECT, SHAPE_ROUNDED, SHAPE_CIRCLE, SHAPE_OVAL, SHAPE_DIAMOND})
+SHAPE_BRUSH = "brush"       # procedural rough/torn painterly edge
+SHAPES = frozenset(
+    {SHAPE_RECT, SHAPE_ROUNDED, SHAPE_CIRCLE, SHAPE_OVAL, SHAPE_DIAMOND, SHAPE_BRUSH}
+)
 
 # --- Fit modes -------------------------------------------------------------- #
 FIT_COVER = "cover"      # fill the slot, cropping overflow (default)
@@ -85,6 +93,7 @@ class TemplateSlot:
     rotation_deg: float = 0.0
     shadow: bool = False
     fit: str = FIT_COVER
+    use_cutout: bool = False  # WS 3.3.1: feathered face-cutout instead of hard shape clip
 
     def __post_init__(self) -> None:
         if len(self.rect) != 4:
@@ -194,29 +203,29 @@ def render_spread(
     spec: AlbumSpec,
     *,
     loader: Optional[Loader] = None,
+    face_boxes_by_index: Optional[Sequence[FaceBoxes]] = None,
+    use_cutout: bool = False,
 ) -> Image.Image:
-    """
-    Composite ``image_paths`` into ``template`` and return an RGB spread image.
+    """Composite ``image_paths`` into ``template`` and return an RGB spread image.
 
-    One image is placed per slot, in order; extra images/slots are ignored so a
-    partially-filled template still renders. Backgrounds, shapes, borders and
-    shadows are all drawn programmatically (no art assets needed).
+    ``face_boxes_by_index[i]`` holds relative face boxes for image ``i`` (WS 3.1);
+    ``use_cutout`` enables feathered cutouts on slots authored ``use_cutout=True``
+    (WS 3.3.1), falling back to the shape clip when no reliable face exists.
     """
     open_image = loader or _default_loader
     width, height = spec.spread_width_px, spec.spread_height_px
     short_edge = min(width, height)
-
-    images = [open_image(str(p)) for p in image_paths[: len(template.slots)]]
-
+    n = len(template.slots)
+    images = [open_image(str(p)) for p in image_paths[:n]]
     canvas = Image.new("RGBA", (width, height), _background_rgba(template.background, images))
-
     margin = round(spec.margin_in * spec.dpi)
     ux, uy = margin, margin
     uw, uh = max(1, width - 2 * margin), max(1, height - 2 * margin)
-
-    for slot, image in zip(template.slots, images):
-        _place_slot(canvas, slot, image, (ux, uy, uw, uh), short_edge)
-
+    for i, (slot, image) in enumerate(zip(template.slots, images)):
+        boxes: FaceBoxes = ()
+        if face_boxes_by_index is not None and i < len(face_boxes_by_index):
+            boxes = face_boxes_by_index[i] or ()
+        _place_slot(canvas, slot, image, (ux, uy, uw, uh), short_edge, boxes, use_cutout)
     return canvas.convert("RGB")
 
 
@@ -226,36 +235,66 @@ def _place_slot(
     image: Image.Image,
     usable: tuple[int, int, int, int],
     short_edge: int,
+    face_boxes: FaceBoxes = (),
+    use_cutout: bool = False,
 ) -> None:
     ux, uy, uw, uh = usable
     x = ux + round(slot.rect[0] * uw)
     y = uy + round(slot.rect[1] * uh)
     w = max(1, round(slot.rect[2] * uw))
     h = max(1, round(slot.rect[3] * uh))
-
     border_px = max(0, round(slot.border * short_edge))
     radius_px = max(0, round(slot.corner_radius * min(w, h)))
+    fitted = _fit(image.convert("RGB"), w, h, slot.fit, face_boxes)
 
-    fitted = _fit(image.convert("RGB"), w, h, slot.fit)
-    tile = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    tile.paste(fitted, ((w - fitted.width) // 2, (h - fitted.height) // 2))
-    tile.putalpha(_shape_mask((w, h), slot.shape, radius_px))
-    if border_px:
-        _draw_border(tile, slot.shape, border_px, slot.border_color, radius_px)
+    tile: Optional[Image.Image] = None
+    if use_cutout and slot.use_cutout and face_boxes:
+        remapped = _remap_faces_to_fit(face_boxes, image.width, image.height, w, h)
+        try:
+            from core.album.face_segmenter import cutout_from_faces as _cutout
+            cut = _cutout(fitted, remapped) if remapped else None
+        except Exception:  # noqa: BLE001 - cutout must never break the render
+            cut = None
+        if cut is not None:
+            tile = cut if cut.size == (w, h) else cut.resize((w, h), Image.BILINEAR)
+
+    if tile is None:
+        tile = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        tile.paste(fitted, ((w - fitted.width) // 2, (h - fitted.height) // 2))
+        seed = int(abs(slot.rect[0] * 1000 + slot.rect[1] * 100) + w + h) & 0x7FFFFFFF
+        tile.putalpha(_shape_mask((w, h), slot.shape, radius_px, seed=seed))
+        if border_px and slot.shape != SHAPE_BRUSH:
+            _draw_border(tile, slot.shape, border_px, slot.border_color, radius_px)
 
     if slot.rotation_deg:
         tile = tile.rotate(slot.rotation_deg, expand=True, resample=Image.BICUBIC)
-
     cx, cy = x + w // 2, y + h // 2
     px, py = cx - tile.width // 2, cy - tile.height // 2
-
     if slot.shadow:
         _paste_shadow(canvas, tile, (px, py), short_edge)
     canvas.alpha_composite(tile, (px, py))
 
 
-def _fit(image: Image.Image, w: int, h: int, fit: str) -> Image.Image:
-    """Cover-crop (fill + crop) or contain (fit whole) the image to ``w x h``."""
+def _remap_faces_to_fit(face_boxes, iw, ih, w, h):
+    """Map source-relative face boxes onto the cover-fitted tile coordinate space."""
+    if iw <= 0 or ih <= 0:
+        return tuple(face_boxes)
+    cx, cy, cw, ch = face_safe_cover_crop(iw / ih, w / h, tuple(face_boxes))
+    out = []
+    for bx, by, bw, bh in face_boxes:
+        nx = (bx - cx) / cw if cw else bx
+        ny = (by - cy) / ch if ch else by
+        nw = bw / cw if cw else bw
+        nh = bh / ch if ch else bh
+        nx = max(0.0, min(1.0, nx)); ny = max(0.0, min(1.0, ny))
+        nw = max(0.0, min(1.0 - nx, nw)); nh = max(0.0, min(1.0 - ny, nh))
+        if nw > 0 and nh > 0:
+            out.append((nx, ny, nw, nh))
+    return tuple(out)
+
+
+def _fit(image: Image.Image, w: int, h: int, fit: str, face_boxes: FaceBoxes = ()) -> Image.Image:
+    """Cover-crop or contain to ``w x h``; face boxes shift a cover crop (WS 3.1)."""
     iw, ih = image.size
     if iw <= 0 or ih <= 0:
         return Image.new("RGB", (w, h), (230, 230, 230))
@@ -269,11 +308,18 @@ def _fit(image: Image.Image, w: int, h: int, fit: str) -> Image.Image:
         out = Image.new("RGB", (w, h), (255, 255, 255))
         out.paste(resized, ((w - nw) // 2, (h - nh) // 2))
         return out
-    left, top = (nw - w) // 2, (nh - h) // 2
+    if face_boxes:
+        crop_x, crop_y, _, _ = face_safe_cover_crop(iw / ih, w / h, tuple(face_boxes))
+        left = int(round(crop_x * nw)); top = int(round(crop_y * nh))
+    else:
+        left, top = (nw - w) // 2, (nh - h) // 2
+    left = max(0, min(left, nw - w)); top = max(0, min(top, nh - h))
     return resized.crop((left, top, left + w, top + h))
 
 
-def _shape_mask(size: tuple[int, int], shape: str, radius_px: int) -> Image.Image:
+def _shape_mask(size: tuple[int, int], shape: str, radius_px: int, seed: int = 0) -> Image.Image:
+    if shape == SHAPE_BRUSH:
+        return brush_mask(size, seed=seed)
     w, h = size
     mask = Image.new("L", size, 0)
     draw = ImageDraw.Draw(mask)
@@ -287,7 +333,7 @@ def _shape_mask(size: tuple[int, int], shape: str, radius_px: int) -> Image.Imag
         draw.ellipse([0, 0, w - 1, h - 1], fill=255)
     elif shape == SHAPE_DIAMOND:
         draw.polygon([(w // 2, 0), (w - 1, h // 2), (w // 2, h - 1), (0, h // 2)], fill=255)
-    else:  # SHAPE_RECT
+    else:
         draw.rectangle([0, 0, w - 1, h - 1], fill=255)
     return mask
 
@@ -355,7 +401,7 @@ def _default_loader(path: str) -> Image.Image:
     try:
         img = Image.open(path)
         img.load()
-        return img
+        return ImageOps.exif_transpose(img)  # honor camera orientation
     except Exception:  # noqa: BLE001 - a missing/unreadable photo becomes a placeholder
         return Image.new("RGB", (1000, 1000), (225, 225, 225))
 
@@ -379,80 +425,54 @@ def _slot(rect, shape=SHAPE_RECT, **kw):
 
 
 def default_templates() -> list[SpreadTemplate]:
-    """
-    The built-in ``classic`` theme: arrangements for 1–6 photos that use
-    circles, ovals, rounded rectangles and diamonds freely (per the chosen
-    "shapes prominent" style), all with a white medium border and soft shadow
-    over a light sampled-colour background.
-    """
+    """Built-in ``classic`` theme. Base layouts for 1-6 photos come first (so a
+    count maps to a base layout); ``-b`` variants follow to give ``select_template``
+    a second option per count. Hero slots of the 3/4/5-photo spreads are
+    ``use_cutout=True`` so the editorial silhouette can be enabled."""
     return [
-        # 1 — a single photo as a large rounded panel on a tinted page.
-        SpreadTemplate(
-            name="classic-1",
-            theme=DEFAULT_THEME,
-            slots=(_slot((0.05, 0.06, 0.90, 0.88), SHAPE_ROUNDED, corner_radius=0.06),),
-            background=_BG,
-        ),
-        # 2 — a rounded panel beside a tall oval.
-        SpreadTemplate(
-            name="classic-2",
-            theme=DEFAULT_THEME,
-            slots=(
-                _slot((0.03, 0.10, 0.45, 0.80), SHAPE_ROUNDED, corner_radius=0.05),
-                _slot((0.53, 0.12, 0.44, 0.76), SHAPE_OVAL),
-            ),
-            background=_BG,
-        ),
-        # 3 — a hero rectangle with a circle and a diamond alongside.
-        SpreadTemplate(
-            name="classic-3",
-            theme=DEFAULT_THEME,
-            slots=(
-                _slot((0.0, 0.0, 0.56, 1.0)),
-                _slot((0.60, 0.04, 0.38, 0.44), SHAPE_CIRCLE),
-                _slot((0.60, 0.52, 0.38, 0.44), SHAPE_DIAMOND),
-            ),
-            background=_BG,
-        ),
-        # 4 — hero rectangle + a stack of three shaped accents.
-        SpreadTemplate(
-            name="classic-4",
-            theme=DEFAULT_THEME,
-            slots=(
-                _slot((0.0, 0.0, 0.5, 1.0)),
-                _slot((0.54, 0.03, 0.44, 0.30), SHAPE_CIRCLE),
-                _slot((0.54, 0.35, 0.44, 0.30), SHAPE_ROUNDED, corner_radius=0.10),
-                _slot((0.54, 0.68, 0.44, 0.30), SHAPE_DIAMOND),
-            ),
-            background=_BG,
-        ),
-        # 5 — hero rectangle + a 2x2 grid of mixed shapes.
-        SpreadTemplate(
-            name="classic-5",
-            theme=DEFAULT_THEME,
-            slots=(
-                _slot((0.0, 0.0, 0.48, 1.0)),
-                _slot((0.52, 0.02, 0.22, 0.46), SHAPE_CIRCLE),
-                _slot((0.76, 0.02, 0.22, 0.46), SHAPE_ROUNDED, corner_radius=0.12),
-                _slot((0.52, 0.52, 0.22, 0.46), SHAPE_DIAMOND),
-                _slot((0.76, 0.52, 0.22, 0.46), SHAPE_OVAL),
-            ),
-            background=_BG,
-        ),
-        # 6 — a 3x2 gallery alternating rounded panels with circles/ovals/diamond.
-        SpreadTemplate(
-            name="classic-6",
-            theme=DEFAULT_THEME,
-            slots=(
-                _slot((0.00, 0.00, 0.30, 0.47), SHAPE_ROUNDED, corner_radius=0.10),
-                _slot((0.35, 0.00, 0.30, 0.47), SHAPE_CIRCLE),
-                _slot((0.70, 0.00, 0.30, 0.47), SHAPE_ROUNDED, corner_radius=0.10),
-                _slot((0.00, 0.53, 0.30, 0.47), SHAPE_OVAL),
-                _slot((0.35, 0.53, 0.30, 0.47), SHAPE_ROUNDED, corner_radius=0.10),
-                _slot((0.70, 0.53, 0.30, 0.47), SHAPE_DIAMOND),
-            ),
-            background=_BG,
-        ),
+        SpreadTemplate(name="classic-1", theme=DEFAULT_THEME,
+            slots=(_slot((0.05, 0.06, 0.90, 0.88), SHAPE_BRUSH),), background=_BG),
+        SpreadTemplate(name="classic-2", theme=DEFAULT_THEME, slots=(
+            _slot((0.03, 0.10, 0.45, 0.80), SHAPE_ROUNDED, corner_radius=0.05),
+            _slot((0.53, 0.12, 0.44, 0.76), SHAPE_OVAL),
+        ), background=_BG),
+        SpreadTemplate(name="classic-3", theme=DEFAULT_THEME, slots=(
+            _slot((0.0, 0.0, 0.56, 1.0), use_cutout=True),
+            _slot((0.60, 0.04, 0.38, 0.44), SHAPE_CIRCLE),
+            _slot((0.60, 0.52, 0.38, 0.44), SHAPE_DIAMOND),
+        ), background=_BG),
+        SpreadTemplate(name="classic-4", theme=DEFAULT_THEME, slots=(
+            _slot((0.0, 0.0, 0.5, 1.0), SHAPE_BRUSH, use_cutout=True),
+            _slot((0.54, 0.03, 0.44, 0.30), SHAPE_CIRCLE),
+            _slot((0.54, 0.35, 0.44, 0.30), SHAPE_ROUNDED, corner_radius=0.10),
+            _slot((0.54, 0.68, 0.44, 0.30), SHAPE_DIAMOND),
+        ), background=_BG),
+        SpreadTemplate(name="classic-5", theme=DEFAULT_THEME, slots=(
+            _slot((0.0, 0.0, 0.48, 1.0), use_cutout=True),
+            _slot((0.52, 0.02, 0.22, 0.46), SHAPE_CIRCLE),
+            _slot((0.76, 0.02, 0.22, 0.46), SHAPE_ROUNDED, corner_radius=0.12),
+            _slot((0.52, 0.52, 0.22, 0.46), SHAPE_DIAMOND),
+            _slot((0.76, 0.52, 0.22, 0.46), SHAPE_OVAL),
+        ), background=_BG),
+        SpreadTemplate(name="classic-6", theme=DEFAULT_THEME, slots=(
+            _slot((0.00, 0.00, 0.30, 0.47), SHAPE_ROUNDED, corner_radius=0.10),
+            _slot((0.35, 0.00, 0.30, 0.47), SHAPE_CIRCLE),
+            _slot((0.70, 0.00, 0.30, 0.47), SHAPE_ROUNDED, corner_radius=0.10),
+            _slot((0.00, 0.53, 0.30, 0.47), SHAPE_OVAL),
+            _slot((0.35, 0.53, 0.30, 0.47), SHAPE_ROUNDED, corner_radius=0.10),
+            _slot((0.70, 0.53, 0.30, 0.47), SHAPE_DIAMOND),
+        ), background=_BG),
+        SpreadTemplate(name="classic-3b", theme=DEFAULT_THEME, slots=(
+            _slot((0.00, 0.06, 0.32, 0.88), SHAPE_ROUNDED, corner_radius=0.06),
+            _slot((0.34, 0.06, 0.32, 0.88), SHAPE_ROUNDED, corner_radius=0.06),
+            _slot((0.68, 0.06, 0.32, 0.88), SHAPE_ROUNDED, corner_radius=0.06),
+        ), background=_BG),
+        SpreadTemplate(name="classic-4b", theme=DEFAULT_THEME, slots=(
+            _slot((0.02, 0.04, 0.46, 0.44), SHAPE_ROUNDED, corner_radius=0.10),
+            _slot((0.52, 0.04, 0.46, 0.44), SHAPE_CIRCLE),
+            _slot((0.02, 0.52, 0.46, 0.44), SHAPE_OVAL),
+            _slot((0.52, 0.52, 0.46, 0.44), SHAPE_ROUNDED, corner_radius=0.10),
+        ), background=_BG),
     ]
 
 
@@ -468,39 +488,37 @@ def load_templates(root: PathLike) -> list[SpreadTemplate]:
 
 
 def select_template(
-    templates: Sequence[SpreadTemplate], count: int, theme: Optional[str] = None
+    templates: Sequence[SpreadTemplate],
+    count: int,
+    theme: Optional[str] = None,
+    variant: int = 0,
 ) -> SpreadTemplate:
-    """
-    Pick a template for ``count`` photos, preferring ``theme``.
-
-    Chooses an exact photo-count match within the theme; if none exists, falls
-    back to an auto rectangular grid so any count still renders.
-    """
+    """Pick a template for ``count`` photos; ``variant`` rotates equal matches."""
     if count < 1:
         raise TemplateError(f"count must be >= 1, got {count}")
     pool = [t for t in templates if theme is None or t.theme == theme]
     exact = [t for t in pool if t.photo_count == count]
     if exact:
-        return exact[0]
-    return auto_grid_template(count, theme or DEFAULT_THEME)
+        return exact[variant % len(exact)]
+    return auto_grid_template(count, theme or DEFAULT_THEME, variant)
 
 
-def auto_grid_template(count: int, theme: str = DEFAULT_THEME) -> SpreadTemplate:
-    """A near-square rectangular grid holding exactly ``count`` slots."""
+def auto_grid_template(count: int, theme: str = DEFAULT_THEME, variant: int = 0) -> SpreadTemplate:
+    """A rectangular grid of ``count`` slots; ``variant`` varies the columns."""
     import math
-
-    cols = max(1, math.ceil(math.sqrt(count)))
+    base_cols = max(1, math.ceil(math.sqrt(count)))
+    v = variant % 3
+    cols = {0: base_cols, 1: base_cols + 1, 2: max(1, base_cols - 1)}[v]
+    cols = max(1, min(cols, count))
     rows = max(1, math.ceil(count / cols))
     g = 0.015
     cell_w, cell_h = (1.0 - g * (cols - 1)) / cols, (1.0 - g * (rows - 1)) / rows
-    slots: list[TemplateSlot] = []
+    shape = SHAPE_ROUNDED if v == 1 else SHAPE_RECT
+    corner = 0.10 if v == 1 else 0.0
+    slots = []
     for i in range(count):
         r, c = divmod(i, cols)
-        slots.append(
-            TemplateSlot(
-                rect=(c * (cell_w + g), r * (cell_h + g), cell_w, cell_h),
-                border=0.005,
-            )
-        )
-    return SpreadTemplate(name=f"grid-{count}", theme=theme, slots=tuple(slots),
+        slots.append(TemplateSlot(rect=(c * (cell_w + g), r * (cell_h + g), cell_w, cell_h),
+                                  shape=shape, corner_radius=corner, border=0.005))
+    return SpreadTemplate(name=f"grid-{count}-v{v}", theme=theme, slots=tuple(slots),
                           background=Background(type=BG_SAMPLED))

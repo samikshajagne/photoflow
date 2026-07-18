@@ -50,15 +50,29 @@ PathLike = Union[str, Path]
 # Default target mean luma (normalized 0..1) that exposure aims for. Mid-tone.
 DEFAULT_TARGET_BRIGHTNESS: float = 0.5
 # Default maximum absolute leveling rotation the engine will ever propose.
-DEFAULT_MAX_STRAIGHTEN_DEG: float = 8.0
+# Kept small so a mis-estimated tilt can't visibly skew a good photo.
+DEFAULT_MAX_STRAIGHTEN_DEG: float = 3.0
 
-# Clamp ranges keeping each adjustment in a sane, non-destructive band.
-_GAIN_MIN: float = 0.5
-_GAIN_MAX: float = 2.0
-_EXPOSURE_MIN: float = 0.5
-_EXPOSURE_MAX: float = 2.5
-_CONTRAST_MIN: float = 0.8
-_CONTRAST_MAX: float = 1.4
+# How much of each computed correction is actually applied (0 = none, 1 = full).
+# A gentle default means already-decent photos are only nudged, not overhauled.
+DEFAULT_EDIT_STRENGTH: float = 0.5
+
+# Dead-zones: when a raw correction is within this of "no change", skip it
+# entirely, so well-exposed / neutral / level photos are left untouched.
+_GAIN_DEADZONE: float = 0.06        # ±6% channel gain
+_EXPOSURE_DEADZONE: float = 0.12    # ±12% brightness
+_CONTRAST_DEADZONE: float = 0.08    # ±8% contrast
+_STRAIGHTEN_DEADZONE_DEG: float = 1.0
+
+# Clamp ranges keeping each adjustment in a tight, non-destructive band. These
+# are deliberately narrow so the auto-correction can never blow out or crush an
+# image, or neutralize an intentional colour mood (e.g. a warm Haldi frame).
+_GAIN_MIN: float = 0.85
+_GAIN_MAX: float = 1.18
+_EXPOSURE_MIN: float = 0.8
+_EXPOSURE_MAX: float = 1.4
+_CONTRAST_MIN: float = 0.92
+_CONTRAST_MAX: float = 1.15
 
 # Reference standard deviation (normalized 0..1) contrast normalizes toward.
 _CONTRAST_REFERENCE_STD: float = 0.22
@@ -177,6 +191,7 @@ class AutoEditor:
         self,
         target_brightness: float = DEFAULT_TARGET_BRIGHTNESS,
         max_straighten_deg: float = DEFAULT_MAX_STRAIGHTEN_DEG,
+        strength: float = DEFAULT_EDIT_STRENGTH,
     ) -> None:
         if not 0.0 < target_brightness < 1.0:
             raise AutoEditError(
@@ -189,6 +204,8 @@ class AutoEditor:
 
         self.target_brightness = float(target_brightness)
         self.max_straighten_deg = float(max_straighten_deg)
+        # How much of each correction to apply (blended toward "no change").
+        self.strength = _clamp(float(strength), 0.0, 1.0)
 
     @classmethod
     def from_config(cls, config: "AppConfig") -> "AutoEditor":
@@ -269,7 +286,9 @@ class AutoEditor:
         def gain(channel_mean: float) -> float:
             if channel_mean <= 1e-6:
                 return _GAIN_MAX
-            return _clamp(gray_mean / channel_mean, _GAIN_MIN, _GAIN_MAX)
+            raw = gray_mean / channel_mean
+            softened = _soften(raw, self.strength, _GAIN_DEADZONE)
+            return _clamp(softened, _GAIN_MIN, _GAIN_MAX)
 
         # Return in R, G, B order per the dataclass contract.
         return (gain(r_mean), gain(g_mean), gain(b_mean))
@@ -286,7 +305,9 @@ class AutoEditor:
         mean_luma = float(luma.mean()) / 255.0
         if mean_luma <= 1e-6:
             return _EXPOSURE_MAX
-        return _clamp(self.target_brightness / mean_luma, _EXPOSURE_MIN, _EXPOSURE_MAX)
+        raw = self.target_brightness / mean_luma
+        softened = _soften(raw, self.strength, _EXPOSURE_DEADZONE)
+        return _clamp(softened, _EXPOSURE_MIN, _EXPOSURE_MAX)
 
     def _contrast_multiplier(self, bgr: np.ndarray) -> float:
         """
@@ -300,7 +321,9 @@ class AutoEditor:
         std = float(luma.std()) / 255.0
         if std <= 1e-6:
             return _CONTRAST_MAX
-        return _clamp(_CONTRAST_REFERENCE_STD / std, _CONTRAST_MIN, _CONTRAST_MAX)
+        raw = _CONTRAST_REFERENCE_STD / std
+        softened = _soften(raw, self.strength, _CONTRAST_DEADZONE)
+        return _clamp(softened, _CONTRAST_MIN, _CONTRAST_MAX)
 
     def _straighten_degrees(self, bgr: np.ndarray) -> float:
         """
@@ -345,6 +368,9 @@ class AutoEditor:
 
         # Median tilt; rotating by +tilt levels the lines back to horizontal.
         tilt = float(np.median(angles))
+        if abs(tilt) < _STRAIGHTEN_DEADZONE_DEG:
+            return 0.0  # too small to be worth risking a wrong rotation
+        tilt *= self.strength
         return _clamp(tilt, -self.max_straighten_deg, self.max_straighten_deg)
 
     def _face_aware_crop(
@@ -523,6 +549,20 @@ class AutoEditor:
 def _clamp(value: float, low: float, high: float) -> float:
     """Constrain ``value`` to the inclusive range ``[low, high]``."""
     return max(low, min(high, value))
+
+
+def _soften(value: float, strength: float, deadzone: float) -> float:
+    """
+    Gentle a multiplicative correction toward 1.0 (no change).
+
+    Values within ``deadzone`` of 1.0 snap to 1.0 (leave the image alone);
+    larger ones are scaled toward 1.0 by ``strength`` (0 = no correction,
+    1 = full). So a raw 1.6× exposure at strength 0.5 becomes 1.3×.
+    """
+    delta = value - 1.0
+    if abs(delta) <= deadzone:
+        return 1.0
+    return 1.0 + delta * strength
 
 
 def _nearest_third(value: float) -> float:

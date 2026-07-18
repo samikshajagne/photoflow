@@ -34,6 +34,7 @@ STEPS: tuple[tuple[str, str], ...] = (
     ("open", "Open & Analyze"),
     ("people", "Label People"),
     ("album", "Build Album"),
+    ("preview", "Preview"),
     ("export", "Export"),
 )
 
@@ -42,6 +43,7 @@ _TITLES = {
     "open": "Choose and sort your photos",
     "people": "Label the people",
     "album": "Build your album",
+    "preview": "Preview your album",
     "export": "Save your album",
 }
 _DESCRIPTIONS = {
@@ -50,6 +52,8 @@ _DESCRIPTIONS = {
     "people": "Name the key people (bride, groom, family) so your album is built "
     "around them. You can skip anyone you don't need.",
     "album": "Lay your best photos into album spreads automatically.",
+    "preview": "See every spread as it will export. Change the page size and it "
+    "re-renders instantly.",
     "export": "Save the album as PNG, JPG, PDF, or layered PSD — no Photoshop needed.",
 }
 # Primary button label per step.
@@ -57,6 +61,7 @@ _CTA = {
     "open": "Open & Analyze…",
     "people": "Label People",
     "album": "Build Album",
+    "preview": "Preview Album",
     "export": "Export Album",
 }
 

@@ -39,6 +39,7 @@ import dataclasses
 import math
 from typing import Optional
 
+from core.album.facecrop import face_safe_cover_crop
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -750,39 +751,14 @@ class AlbumLayoutEngine:
         """
         _, _, fw, fh = frame_px
         frame_ar = fw / fh if fh else 1.0
-        photo_ar = item.aspect_ratio
 
-        # Crop dimensions in source-relative units. Comparing aspect ratios
-        # tells us which dimension overflows the frame and must be trimmed.
-        if photo_ar > frame_ar:
-            # Photo is wider than the frame -> crop horizontally, keep full height.
-            crop_h = 1.0
-            crop_w = frame_ar / photo_ar
-        else:
-            # Photo is taller than the frame -> crop vertically, keep full width.
-            crop_w = 1.0
-            crop_h = photo_ar / frame_ar
-
-        crop_w = min(crop_w, 1.0)
-        crop_h = min(crop_h, 1.0)
-
-        # Default: centered crop window.
-        crop_x = (1.0 - crop_w) / 2.0
-        crop_y = (1.0 - crop_h) / 2.0
-
-        # Protect more than the bare face box: keep headroom above and torso
-        # below so a cover crop doesn't clip foreheads, chins, or bodies.
-        safe_boxes = self._pad_face_boxes(item.face_boxes)
-
+        # Shared face-safe cover geometry (see :mod:`core.album.facecrop`), with
+        # the gutter-aware horizontal bias applied for double-page spreads so
+        # faces are pulled toward the outer page edge, away from the binding.
         pull_outward = self._pulls_left(frame_px, spec)
-        crop_x = self._face_safe_offset(
-            crop_x, crop_w, safe_boxes, axis=0, pull_low=pull_outward
+        return face_safe_cover_crop(
+            item.aspect_ratio, frame_ar, item.face_boxes, pull_low_x=pull_outward
         )
-        crop_y = self._face_safe_offset(
-            crop_y, crop_h, safe_boxes, axis=1, pull_low=None
-        )
-
-        return (crop_x, crop_y, crop_w, crop_h)
 
     @staticmethod
     def _pad_face_boxes(face_boxes: tuple[RelRect, ...]) -> tuple[RelRect, ...]:

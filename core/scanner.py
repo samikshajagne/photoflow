@@ -11,6 +11,15 @@ or from a validated :class:`~utils.config.AppConfig` via
 :meth:`ImageScanner.from_config`.
 
 Scope: enumeration only — no hashing, decoding, or analysis.
+
+Output-folder exclusion
+-----------------------
+When PhotoFlow writes its results (``PhotoFlow_Output``, ``PhotoFlow_Album``)
+inside the user's chosen folder, a subsequent scan of the same folder must
+not pick up those copies as new originals. The scanner automatically skips
+any directory whose name matches ``exclude_dirs`` (case-insensitive on
+Windows). ``from_config`` always adds the configured output folder name so
+this is transparent to callers.
 """
 
 from __future__ import annotations
@@ -44,6 +53,16 @@ class ScanError(Exception):
     """Raised when a folder cannot be scanned (missing, not a directory, I/O)."""
 
 
+# Folders that PhotoFlow creates inside the user's chosen input directory.
+# They must never be re-scanned as new originals on subsequent runs.
+_DEFAULT_EXCLUDE_DIRS: frozenset[str] = frozenset(
+    [
+        "photoflow_output",   # organizer output tree
+        "photoflow_album",    # album renders / JSX / manifest
+    ]
+)
+
+
 class ImageScanner:
     """
     Recursively enumerates supported image files within a folder.
@@ -51,6 +70,10 @@ class ImageScanner:
     Args:
         supported_extensions: Extensions to include, each starting with a dot
             (e.g. ``".jpg"``). Matched case-insensitively. Must be non-empty.
+        exclude_dirs: Directory *names* (not full paths) to skip during the
+            recursive walk. Matched case-insensitively. Defaults to the
+            built-in set of PhotoFlow output folders so they are never
+            re-ingested as originals on a second run.
 
     Raises:
         ScanError: if ``supported_extensions`` is empty or malformed.
@@ -59,6 +82,7 @@ class ImageScanner:
     def __init__(
         self,
         supported_extensions: tuple[str, ...] = DEFAULT_SUPPORTED_EXTENSIONS,
+        exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
     ) -> None:
         if not supported_extensions:
             raise ScanError("supported_extensions must not be empty")
@@ -68,15 +92,27 @@ class ImageScanner:
                     f"supported_extensions entries must start with '.', got '{ext}'"
                 )
         self._extensions = frozenset(ext.lower() for ext in supported_extensions)
+        self._exclude_dirs: frozenset[str] = frozenset(
+            d.lower() for d in exclude_dirs
+        )
 
     @classmethod
     def from_config(cls, config: "AppConfig") -> "ImageScanner":
-        """Build a scanner from ``io.supported_extensions`` in the config."""
-        return cls(supported_extensions=config.io.supported_extensions)
+        """Build a scanner from ``io.supported_extensions`` in the config.
+
+        The configured ``output_folder_name`` is always added to the exclusion
+        set so PhotoFlow's own output is never picked up as new originals.
+        """
+        extra = frozenset([config.io.output_folder_name.lower()])
+        return cls(
+            supported_extensions=config.io.supported_extensions,
+            exclude_dirs=_DEFAULT_EXCLUDE_DIRS | extra,
+        )
 
     def scan(self, folder: PathLike) -> list[Path]:
         """
-        Return supported image files under ``folder``, recursively.
+        Return supported image files under ``folder``, recursively,
+        skipping any subdirectory whose name is in ``exclude_dirs``.
 
         Results are sorted for deterministic, reproducible ordering.
         Individual unreadable entries (e.g. broken symlinks) are logged and
@@ -97,18 +133,32 @@ class ImageScanner:
         if not root.is_dir():
             raise ScanError(f"Path is not a directory: {root}")
 
+        matches: list[Path] = []
+        skipped_dirs: list[str] = []
         try:
-            candidates = sorted(root.rglob("*"))
+            for path in sorted(root.rglob("*")):
+                try:
+                    # Skip the subtree of any excluded directory by checking
+                    # every component of the path relative to root.
+                    relative_parts = path.relative_to(root).parts
+                    if any(
+                        part.lower() in self._exclude_dirs
+                        for part in relative_parts
+                    ):
+                        if path.is_dir() and path.name.lower() in self._exclude_dirs:
+                            skipped_dirs.append(path.name)
+                        continue
+                    if path.is_file() and path.suffix.lower() in self._extensions:
+                        matches.append(path)
+                except OSError as exc:
+                    logger.warning("Skipping unreadable path '%s': %s", path, exc)
         except OSError as exc:
             raise ScanError(f"Failed to scan folder '{root}': {exc}") from exc
 
-        matches: list[Path] = []
-        for path in candidates:
-            try:
-                if path.is_file() and path.suffix.lower() in self._extensions:
-                    matches.append(path)
-            except OSError as exc:
-                logger.warning("Skipping unreadable path '%s': %s", path, exc)
-
+        if skipped_dirs:
+            logger.info(
+                "Scanner skipped output folder(s): %s",
+                ", ".join(sorted(set(skipped_dirs))),
+            )
         logger.info("Scanner found %d image file(s) under '%s'.", len(matches), root)
         return matches

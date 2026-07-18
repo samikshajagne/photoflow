@@ -90,6 +90,49 @@ def test_render_spread_template_skips_missing(project):
     assert "/nope/missing.jpg" in skipped
 
 
+def test_is_section_opener_flags_first_spread(tmp_path):
+    from core.album.raster import _is_section_opener
+
+    proj = AlbumProject.new(str(tmp_path), album_spec={"dpi": 100})
+    s0 = SpreadRecord(index=0, section="Haldi", width_px=100, height_px=100, placements=[])
+    s1 = SpreadRecord(index=1, section="Haldi", width_px=100, height_px=100, placements=[])
+    s2 = SpreadRecord(index=2, section="Reception", width_px=100, height_px=100, placements=[])
+    proj.spreads = [s0, s1, s2]
+    assert _is_section_opener(proj, s0) is True    # first Haldi spread
+    assert _is_section_opener(proj, s1) is False   # second Haldi spread
+    assert _is_section_opener(proj, s2) is True    # first Reception spread
+
+
+def test_section_theme_is_consistent_across_spreads(tmp_path):
+    # Two spreads in one section share the same (photo-tinted) background; a
+    # spread in a different section gets a different background.
+    yellow = _make_photo(tmp_path / "y1.jpg", (230, 200, 30))
+    yellow2 = _make_photo(tmp_path / "y2.jpg", (235, 205, 35))
+    blue = _make_photo(tmp_path / "b1.jpg", (30, 60, 200))
+    proj = AlbumProject.new(str(tmp_path), album_spec={"dpi": 100})
+    for p in (yellow, yellow2, blue):
+        proj.add_photo(PhotoRecord(source_path=p))
+
+    def _spread(i, section, paths):
+        return SpreadRecord(
+            index=i, section=section, width_px=800, height_px=400,
+            placements=[{"path": p, "frame_px": [0, 0, 400, 400], "crop": [0, 0, 1, 1]} for p in paths],
+        )
+
+    proj.spreads = [
+        _spread(0, "Haldi", [yellow]),
+        _spread(1, "Haldi", [yellow2]),
+        _spread(2, "Reception", [blue]),
+    ]
+    bg = [
+        render_spread_template(proj, s, apply_edits=False).getpixel((2, 2))
+        for s in proj.spreads
+    ]
+    assert bg[0] == bg[1]     # same section -> identical background
+    assert bg[0] != bg[2]     # different section -> different background
+    assert bg[0][0] >= bg[2][0]  # warm Haldi tint has >= red than the blue one
+
+
 def test_crop_maps_to_source_region(project, tmp_path):
     arr = np.zeros((100, 100, 3), dtype=np.uint8)
     arr[:, :50] = (255, 0, 0)

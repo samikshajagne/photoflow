@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QLabel,
+    QLineEdit,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -62,6 +63,9 @@ class AlbumSettingsDialog(QDialog):
         parent: Optional[QWidget] = None,
         spec: Optional[AlbumSpec] = None,
         density: str = DENSITY_BALANCED,
+        cover_title: str = "",
+        cover_date: str = "",
+        target_pages: int = 0,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Album Settings")
@@ -117,6 +121,23 @@ class AlbumSettingsDialog(QDialog):
             self.density.addItem(label, key)
         form.addRow("Photos per spread:", self.density)
 
+        # Target album length. 0 = automatic (~20-30 spreads, all photos fit).
+        self.target_pages_box = QSpinBox()
+        self.target_pages_box.setRange(0, 200)
+        self.target_pages_box.setSpecialValueText("Auto (20–30)")
+        self.target_pages_box.setValue(int(target_pages or 0))
+        form.addRow("Target pages:", self.target_pages_box)
+
+        # Cover text (printed on the album's cover spread).
+        self.couple_names = QLineEdit()
+        self.couple_names.setPlaceholderText("e.g. Ruchika Weds Lukesh")
+        self.couple_names.setText(cover_title or "")
+        form.addRow("Couple names:", self.couple_names)
+        self.wedding_date = QLineEdit()
+        self.wedding_date.setPlaceholderText("e.g. 24 February 2024")
+        self.wedding_date.setText(cover_date or "")
+        form.addRow("Wedding date:", self.wedding_date)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -171,3 +192,15 @@ class AlbumSettingsDialog(QDialog):
 
     def selected_density(self) -> str:
         return str(self.density.currentData())
+
+    def cover_title(self) -> str:
+        """Couple names for the cover (empty string if not provided)."""
+        return self.couple_names.text().strip()
+
+    def cover_date(self) -> str:
+        """Wedding date for the cover (empty string if not provided)."""
+        return self.wedding_date.text().strip()
+
+    def target_pages(self) -> int:
+        """Target album spread count (0 = automatic)."""
+        return int(self.target_pages_box.value())

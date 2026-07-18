@@ -75,7 +75,9 @@ def test_empty_template_rejected():
 # --------------------------------------------------------------------------- #
 def test_default_templates_counts_and_shapes():
     tpls = default_templates()
-    assert [t.photo_count for t in tpls] == [1, 2, 3, 4, 5, 6]
+    counts = [t.photo_count for t in tpls]
+    assert counts[:6] == [1, 2, 3, 4, 5, 6]          # base layouts for 1-6 photos
+    assert counts.count(3) >= 2 and counts.count(4) >= 2  # plus variety variants
     shapes = {s.shape for s in tpls[3].slots}
     assert {SHAPE_CIRCLE, SHAPE_DIAMOND} <= shapes  # showcases shaped slots
 
@@ -117,6 +119,26 @@ def test_render_produces_spread_of_spec_size():
     arr = np.asarray(img)
     reddish = ((arr[:, :, 0] > 150) & (arr[:, :, 1] < 100) & (arr[:, :, 2] < 100)).sum()
     assert reddish > 1000
+
+
+def test_brush_shape_renders():
+    # A brush (torn-edge) slot renders without error and fills the canvas.
+    from core.album.template import SHAPE_BRUSH, Background, SpreadTemplate, TemplateSlot
+
+    spec = AlbumSpec(10, 10, 72)
+    template = SpreadTemplate(
+        name="brush-1",
+        theme="classic",
+        slots=(TemplateSlot(rect=(0.1, 0.1, 0.8, 0.8), shape=SHAPE_BRUSH, shadow=True),),
+        background=Background(type="solid", color="#EEE8DC"),
+    )
+    img = render_spread(
+        template, ["x"], spec, loader=lambda _p: Image.new("RGB", (400, 400), (200, 50, 50))
+    )
+    assert img.size == (spec.spread_width_px, spec.spread_height_px)
+    arr = np.asarray(img)
+    reddish = ((arr[:, :, 0] > 150) & (arr[:, :, 2] < 100)).sum()
+    assert reddish > 1000  # the photo shows through the torn edge
 
 
 def test_render_partial_fill_is_ok():

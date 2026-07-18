@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QSplitter,
+    QStackedWidget,
     QStyle,
     QToolBar,
     QVBoxLayout,
@@ -50,9 +51,11 @@ from utils.logger import get_logger
 from ui_qt.models.photo_index import PhotoEntry, PhotoIndex
 from ui_qt.views.center_view import CenterView
 from ui_qt.views.metadata_panel import MetadataPanel
+from ui_qt.views.preview_view import PreviewView
 from ui_qt.views.sidebar import CategorySidebar
 from ui_qt.views.wizard_bar import WizardBar
 from ui_qt.workers.analysis_worker import AnalysisController
+from ui_qt.workers.preview_worker import PreviewWorker
 
 logger = get_logger("ui_qt.main_window")
 
@@ -79,6 +82,13 @@ class MainWindow(QMainWindow):
         # Album settings chosen by the user (None until first Build Album).
         self._album_spec = None
         self._album_density = "balanced"
+        # Cover text (couple names + date) printed on the album cover.
+        self._cover_title = ""
+        self._cover_date = ""
+        # Target number of album spreads (0 = auto ~20-30).
+        self._target_pages = 0
+        # Background preview renderer (None when idle).
+        self._preview_worker = None
         # Background export worker + its progress dialog (None when idle).
         self._export_worker = None
         self._export_dialog: Optional[QProgressDialog] = None
@@ -151,6 +161,18 @@ class MainWindow(QMainWindow):
         self.action_label.triggered.connect(self._on_label_people)
         self.action_label.setEnabled(False)
 
+        self.action_preview = toolbar.addAction(
+            style.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView), "Preview"
+        )
+        self.action_preview.triggered.connect(self._on_preview)
+        self.action_preview.setEnabled(False)
+
+        self.action_change_size = toolbar.addAction(
+            style.standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton), "Change Size"
+        )
+        self.action_change_size.triggered.connect(self._on_change_size)
+        self.action_change_size.setEnabled(False)
+
         self.action_export = toolbar.addAction(
             style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Export Album"
         )
@@ -162,10 +184,16 @@ class MainWindow(QMainWindow):
 
         self.sidebar = CategorySidebar()
         self.center = CenterView()
+        self.preview = PreviewView()
         self.metadata = MetadataPanel()
 
+        # Center area toggles between the analysis grid and the album preview.
+        self.center_stack = QStackedWidget()
+        self.center_stack.addWidget(self.center)   # index 0: thumbnail grid
+        self.center_stack.addWidget(self.preview)  # index 1: rendered preview
+
         splitter.addWidget(self.sidebar)
-        splitter.addWidget(self.center)
+        splitter.addWidget(self.center_stack)
         splitter.addWidget(self.metadata)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -219,6 +247,7 @@ class MainWindow(QMainWindow):
         self._album_entries = {}
         self._people_prepared = False
         self.setWindowTitle(f"PhotoFlow - {path}")
+        self.center_stack.setCurrentWidget(self.center)  # back to the grid view
         self.sidebar.set_counts(None)
         self.metadata.clear()
 
@@ -283,6 +312,7 @@ class MainWindow(QMainWindow):
         self._result = result
         self._index = PhotoIndex.from_result(result)
         self._analyzed = True
+        self.center_stack.setCurrentWidget(self.center)  # show the analysis grid
 
         counts = getattr(result, "category_counts", {}) or {}
         self.sidebar.set_counts(counts)
@@ -334,11 +364,21 @@ class MainWindow(QMainWindow):
         # Let the user choose album size / quality / density before building.
         from ui_qt.views.album_settings_dialog import AlbumSettingsDialog
 
-        dialog = AlbumSettingsDialog(self, spec=self._album_spec, density=self._album_density)
+        dialog = AlbumSettingsDialog(
+            self,
+            spec=self._album_spec,
+            density=self._album_density,
+            cover_title=self._cover_title,
+            cover_date=self._cover_date,
+            target_pages=self._target_pages,
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self._album_spec = dialog.album_spec()
         self._album_density = dialog.selected_density()
+        self._cover_title = dialog.cover_title()
+        self._cover_date = dialog.cover_date()
+        self._target_pages = dialog.target_pages()
 
         if not self._generate_album("Building your album… this can take a while."):
             return
@@ -349,7 +389,14 @@ class MainWindow(QMainWindow):
         """Build the album on the current folder in the background. True on success."""
         from ui_qt.workers.album_workers import GenerateWorker
 
-        worker = GenerateWorker(str(self._folder), self._album_spec, self._album_density)
+        worker = GenerateWorker(
+            str(self._folder),
+            self._album_spec,
+            self._album_density,
+            cover_title=self._cover_title,
+            cover_date=self._cover_date,
+            target_pages=self._target_pages,
+        )
         ok, payload = self._run_busy_worker(worker, status)
         if not ok:
             logger.error("Album generation failed: %s", payload)
@@ -390,9 +437,8 @@ class MainWindow(QMainWindow):
 
         Returns ``(ok, payload)`` — the worker's result on success, or its error
         message on failure. The worker must expose ``succeeded(object)`` and
-        ``failed(str)`` signals. Used for both the album build and the people
-        pass (neither has a progress signal nor is cleanly cancellable, so the
-        dialog is indeterminate with no Cancel button).
+        ``failed(str)`` signals. If the worker also exposes a ``progress(str)``
+        signal, its messages are shown live in the dialog label.
         """
         self.statusBar().showMessage(status)
         dialog = QProgressDialog(status, None, 0, 0, self)
@@ -412,8 +458,15 @@ class MainWindow(QMainWindow):
             outcome["error"] = message
             loop.quit()
 
+        def _progress(message: str) -> None:
+            dialog.setLabelText(message)
+            self.statusBar().showMessage(message)
+
         worker.succeeded.connect(_ok)
         worker.failed.connect(_err)
+        # Connect progress if the worker supports it (GenerateWorker / PreparePeopleWorker do).
+        if hasattr(worker, "progress"):
+            worker.progress.connect(_progress)
         worker.start()
         dialog.show()
         loop.exec()
@@ -451,10 +504,97 @@ class MainWindow(QMainWindow):
         else:
             self.center.show_message("Album generated, but no eligible photos to show.")
 
-        # Album built -> the guided flow can move on to exporting.
+        # Album built -> preview it before exporting.
         self._wizard_done.update({"open", "people", "album"})
-        self._wizard_step = "export"
+        self._wizard_step = "preview"
         self._refresh_wizard()
+
+    # ----------------------------------------------------------------- #
+    # Album preview + size
+    # ----------------------------------------------------------------- #
+    def _current_spec(self):
+        """The album spec to preview/export with (chosen, or a sensible default)."""
+        if self._album_spec is not None:
+            return self._album_spec
+        from core.album.layout import AlbumSpec
+
+        return AlbumSpec(page_width_in=12, page_height_in=12, dpi=300)
+
+    def _on_preview(self) -> None:
+        if self._album_project is None or self._analysis.is_running():
+            return
+        self.center_stack.setCurrentWidget(self.preview)
+        self._start_preview()
+        self._wizard_done.update({"open", "people", "album"})
+        self._wizard_step = "preview"
+        self._update_actions_enabled()
+
+    def _start_preview(self) -> None:
+        """(Re)render the album spreads into the preview panel in the background."""
+        if self._album_project is None:
+            return
+        if self._preview_worker is not None and self._preview_worker.isRunning():
+            self._preview_worker.cancel()
+            self._preview_worker.wait()
+        self.preview.show_message("Rendering preview…")
+        worker = PreviewWorker(self._album_project, self._current_spec(), apply_edits=False)
+        worker.countKnown.connect(self.preview.begin)
+        worker.spreadReady.connect(self.preview.set_spread)
+        worker.finishedAll.connect(self.preview.finish)
+        worker.failed.connect(
+            lambda msg: self.preview.show_message(f"Preview failed:\n{msg}")
+        )
+        self._preview_worker = worker
+        worker.start()
+
+    def _on_change_size(self) -> None:
+        if self._album_project is None or self._analysis.is_running():
+            return
+        from ui_qt.views.album_settings_dialog import AlbumSettingsDialog
+
+        dialog = AlbumSettingsDialog(
+            self,
+            spec=self._current_spec(),
+            density=self._album_density,
+            cover_title=self._cover_title,
+            cover_date=self._cover_date,
+            target_pages=self._target_pages,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._album_spec = dialog.album_spec()
+        self._album_density = dialog.selected_density()
+        self._cover_title = dialog.cover_title()
+        self._cover_date = dialog.cover_date()
+        self._target_pages = dialog.target_pages()
+        # Re-lay the album at the new size so the export matches, then re-preview.
+        self._relayout_album()
+        self.center_stack.setCurrentWidget(self.preview)
+        self._start_preview()
+
+    def _relayout_album(self) -> None:
+        """Re-run layout selection at the current size so export/preview match."""
+        project = self._album_project
+        if project is None or self._album_spec is None:
+            return
+        try:
+            import dataclasses
+
+            from core.album.layout_select import LayoutSelector
+
+            selector = LayoutSelector(
+                density=self._album_density, target_pages=self._target_pages or 0
+            )
+            project.spreads = selector.select(project, self._album_spec)
+            meta = dict(getattr(project.meta, "album_spec", {}) or {})
+            meta.update(dataclasses.asdict(self._album_spec))
+            if self._cover_title:
+                meta["cover_title"] = self._cover_title
+            if self._cover_date:
+                meta["cover_date"] = self._cover_date
+            project.meta.album_spec = meta
+        except Exception as exc:  # noqa: BLE001 - never let a re-layout crash the UI
+            logger.warning("Re-layout at new size failed: %s", exc)
 
     def _build_album_entries(self, project) -> dict[str, list[PhotoEntry]]:
         """Turn each album section's photo paths into grid-ready PhotoEntry rows."""
@@ -663,6 +803,8 @@ class MainWindow(QMainWindow):
             self._on_label_people()
         elif step_key == "album":
             self._on_generate_album()
+        elif step_key == "preview":
+            self._on_preview()
         elif step_key == "export":
             self._on_export_album()
 
@@ -681,6 +823,8 @@ class MainWindow(QMainWindow):
             self.action_refresh.setEnabled(False)
             self.action_album.setEnabled(False)
             self.action_label.setEnabled(False)
+            self.action_preview.setEnabled(False)
+            self.action_change_size.setEnabled(False)
             self.action_export.setEnabled(False)
         else:
             self._update_actions_enabled()
@@ -699,7 +843,10 @@ class MainWindow(QMainWindow):
         # People-first: labelling is available once the folder is analyzed
         # (the clusters are discovered on demand), not only after an album build.
         self.action_label.setEnabled(self._analyzed and not busy)
-        self.action_export.setEnabled(self._album_project is not None and not busy)
+        has_album = self._album_project is not None
+        self.action_preview.setEnabled(has_album and not busy)
+        self.action_change_size.setEnabled(has_album and not busy)
+        self.action_export.setEnabled(has_album and not busy)
         self._refresh_wizard()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt override)
@@ -710,5 +857,8 @@ class MainWindow(QMainWindow):
             # don't destroy the worker while it is still running.
             self._export_worker.cancel()
             self._export_worker.wait()
+        if self._preview_worker is not None and self._preview_worker.isRunning():
+            self._preview_worker.cancel()
+            self._preview_worker.wait()
         self.center.shutdown()
         super().closeEvent(event)
