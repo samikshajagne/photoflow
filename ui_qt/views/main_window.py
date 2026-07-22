@@ -54,6 +54,7 @@ from ui_qt.views.metadata_panel import MetadataPanel
 from ui_qt.views.preview_view import PreviewView
 from ui_qt.views.sidebar import CategorySidebar
 from ui_qt.views.wizard_bar import WizardBar
+from ui_qt.views.api_settings_dialog import ApiSettingsDialog
 from ui_qt.workers.analysis_worker import AnalysisController
 from ui_qt.workers.preview_worker import PreviewWorker
 
@@ -87,6 +88,14 @@ class MainWindow(QMainWindow):
         self._cover_date = ""
         # Target number of album spreads (0 = auto ~20-30).
         self._target_pages = 0
+        # Phase 3/4 layout feature flags (smart ordering on by default, rest opt-in).
+        self._layout_options = {
+            "smart_slot_ordering": True,
+            "flexible_layout": False,
+            "use_cutouts": False,
+            "designed_cover": False,
+            "theme_backgrounds": False,
+        }
         # Background preview renderer (None when idle).
         self._preview_worker = None
         # Background export worker + its progress dialog (None when idle).
@@ -179,6 +188,14 @@ class MainWindow(QMainWindow):
         self.action_export.triggered.connect(self._on_export_album)
         self.action_export.setEnabled(False)
 
+        toolbar.addSeparator()
+        self.action_api_settings = toolbar.addAction(
+            style.standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView), "API Settings"
+        )
+        self.action_api_settings.triggered.connect(self._on_api_settings)
+        self.action_api_settings.setToolTip(
+            "Configure your OpenAI API key for smart event classification"
+        )
     def _build_central(self) -> None:
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
@@ -281,6 +298,11 @@ class MainWindow(QMainWindow):
         if self._folder is not None and not self._analysis.is_running():
             self.load_folder(self._folder)
 
+    def _on_api_settings(self) -> None:
+        """Open the OpenAI API key configuration dialog."""
+        dlg = ApiSettingsDialog(parent=self)
+        dlg.exec()
+
     # ----------------------------------------------------------------- #
     # Analysis (Phase 2)
     # ----------------------------------------------------------------- #
@@ -371,6 +393,7 @@ class MainWindow(QMainWindow):
             cover_title=self._cover_title,
             cover_date=self._cover_date,
             target_pages=self._target_pages,
+            layout_options=self._layout_options,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -379,6 +402,7 @@ class MainWindow(QMainWindow):
         self._cover_title = dialog.cover_title()
         self._cover_date = dialog.cover_date()
         self._target_pages = dialog.target_pages()
+        self._layout_options = dialog.layout_options()
 
         if not self._generate_album("Building your album… this can take a while."):
             return
@@ -396,6 +420,7 @@ class MainWindow(QMainWindow):
             cover_title=self._cover_title,
             cover_date=self._cover_date,
             target_pages=self._target_pages,
+            layout_options=self._layout_options,
         )
         ok, payload = self._run_busy_worker(worker, status)
         if not ok:
@@ -559,6 +584,7 @@ class MainWindow(QMainWindow):
             cover_title=self._cover_title,
             cover_date=self._cover_date,
             target_pages=self._target_pages,
+            layout_options=self._layout_options,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -567,6 +593,7 @@ class MainWindow(QMainWindow):
         self._cover_title = dialog.cover_title()
         self._cover_date = dialog.cover_date()
         self._target_pages = dialog.target_pages()
+        self._layout_options = dialog.layout_options()
         # Re-lay the album at the new size so the export matches, then re-preview.
         self._relayout_album()
         self.center_stack.setCurrentWidget(self.preview)

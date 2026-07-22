@@ -14,7 +14,7 @@ detection (:class:`core.face_detector.FaceResult` regions).
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 RelRect = Tuple[float, float, float, float]
 
@@ -154,3 +154,53 @@ def face_safe_cover_crop(
     crop_y = face_safe_offset(crop_y, crop_h, safe, axis=1, pull_low=None)
 
     return (crop_x, crop_y, crop_w, crop_h)
+
+
+# --------------------------------------------------------------------------- #
+# Landmark-based face box (Implementation Plan — Component 4)
+# --------------------------------------------------------------------------- #
+Point = Tuple[float, float]
+
+# Face proportions relative to the inter-eye distance, used to grow the 5 points
+# into a full head box (crown to chin, ear to ear). Human faces are ~2x the
+# eye-span wide and the crown/chin sit roughly these multiples away.
+_FACE_WIDTH_PER_EYE = 2.2
+_CROWN_PER_EYE = 1.5      # above the eye line
+_CHIN_PER_EYE = 2.6       # below the eye line
+
+
+def face_box_from_landmarks(landmarks: Sequence[Point]) -> Optional[RelRect]:
+    """
+    Derive a full-head face box from 5-point landmarks, or ``None`` if unusable.
+
+    The landmarks are ``[left_eye, right_eye, nose_tip, mouth_left, mouth_right]``
+    in relative ``[0, 1]`` coordinates (as produced by the Vision Brain). Using
+    the **eye midpoint** as the anchor and the inter-eye distance as the scale
+    gives a far more reliable face centre than a raw detector box — and the box
+    is grown to include the crown and chin so a cover crop never clips the top of
+    the head or the jaw.
+
+    Returns a relative ``(x, y, w, h)`` clamped to ``[0, 1]``.
+    """
+    if not landmarks or len(landmarks) < 2:
+        return None
+    (lx, ly), (rx, ry) = landmarks[0], landmarks[1]
+    cx = (lx + rx) / 2.0
+    cy = (ly + ry) / 2.0
+    eye_dist = ((rx - lx) ** 2 + (ry - ly) ** 2) ** 0.5
+    if eye_dist <= 0:
+        return None
+
+    half_w = eye_dist * _FACE_WIDTH_PER_EYE / 2.0
+    top = cy - eye_dist * _CROWN_PER_EYE
+    bottom = cy + eye_dist * _CHIN_PER_EYE
+
+    x0 = max(0.0, cx - half_w)
+    y0 = max(0.0, top)
+    x1 = min(1.0, cx + half_w)
+    y1 = min(1.0, bottom)
+    w = x1 - x0
+    h = y1 - y0
+    if w <= 0 or h <= 0:
+        return None
+    return (x0, y0, w, h)

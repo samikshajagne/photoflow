@@ -35,6 +35,7 @@ from core.album.slot_matcher import (
 )
 from core.album.spread_layout_calculator import get_layout_positions
 from core.album.template import (
+    BG_SOLID,
     SHAPE_CIRCLE,
     SHAPE_RECT,
     SHAPE_ROUNDED,

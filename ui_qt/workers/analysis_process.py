@@ -23,7 +23,17 @@ from __future__ import annotations
 
 import logging
 import traceback
+from pathlib import Path
 from typing import Any
+
+# Load .env so OPENAI_API_KEY reaches the subprocess (it runs in a fresh
+# Python interpreter that doesn't inherit the parent process's env-var load).
+try:
+    from dotenv import load_dotenv as _load_dotenv
+
+    _load_dotenv(Path(__file__).parent.parent.parent / ".env", override=False)
+except ImportError:
+    pass  # python-dotenv not installed; rely on shell-level env vars.
 
 # The logger hierarchy the backend writes to.
 _PHOTOFLOW_LOGGER = "photoflow"

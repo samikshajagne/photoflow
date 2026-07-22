@@ -78,17 +78,22 @@ DEFAULT_MIN_DETECTION_CONFIDENCE: float = 0.5
 DEFAULT_MODEL_SELECTION: int = 1
 
 # Downsample images to this many pixels on their longest edge before running
-# MediaPipe. Keeps latency acceptable for large wedding RAW files while not
-# missing faces. Matched to analysis_max_edge_px in default_config.yaml.
-DEFAULT_MAX_ANALYSIS_EDGE_PX: int = 1024
+# MediaPipe. Higher = better detection of small/distant faces at the cost of
+# slightly more RAM. 1920 gives a good balance for typical wedding shoots
+# (full-room group shots + closeup portraits) without hitting memory limits.
+DEFAULT_MAX_ANALYSIS_EDGE_PX: int = 1920
 
 # Tasks Vision API model, used when the Tasks backend is selected.
-_MODEL_FILENAME = "blaze_face_short_range.tflite"
+# Using the FULL-RANGE model: handles faces up to ~5m away (group shots,
+# ceremony wide shots) vs the short-range model which is optimised for ~2m
+# selfies. Full-range catches far-away faces at the cost of slightly worse
+# very-closeup detection (negligible for wedding photos).
+_MODEL_FILENAME = "blaze_face_full_range.tflite"
 _MODEL_ENV_VAR = "PHOTOFLOW_FACE_MODEL"
 _BUNDLED_MODEL = Path(__file__).resolve().parent.parent / "data" / "models" / _MODEL_FILENAME
 _MODEL_DOWNLOAD_URL = (
     "https://storage.googleapis.com/mediapipe-models/face_detector/"
-    "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite"
+    "blaze_face_full_range/float16/latest/blaze_face_full_range.tflite"
 )
 
 

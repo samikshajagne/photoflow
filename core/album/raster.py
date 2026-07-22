@@ -684,7 +684,18 @@ def render_spread_template(
         spec = _album_spec_for(project, width, height)
     # Rotate template variants by spread index so consecutive spreads differ.
     variant = int(getattr(spread, "index", 0) or 0)
-    template = select_template(default_templates(), len(paths), _album_theme(project), variant=variant)
+    theme = _album_theme(project)
+    # Editorial theme: full-bleed hero + tight grid (no dead space). Its templates
+    # live in a separate pool merged in here.
+    if theme == "editorial":
+        try:
+            from core.album.editorial_templates import editorial_templates
+
+            template = select_template(editorial_templates(), len(paths), "editorial", variant=variant)
+        except Exception:  # noqa: BLE001 - fall back to the classic pool
+            template = select_template(default_templates(), len(paths), theme, variant=variant)
+    else:
+        template = select_template(default_templates(), len(paths), theme, variant=variant)
 
     # WS 4.1: when flexible layouts are enabled, replace the fixed template with
     # one whose slot *types* were chosen to fit this spread's photos. Falls back
@@ -793,6 +804,22 @@ def render_spread_template(
                 _textlayer.pick_quote(section),
                 accent=accent,
             )
+
+    # Editorial theme: overlay the hairline frame + corner flourishes so the
+    # spread reads as designed rather than a bare collage.
+    if theme == "editorial":
+        try:
+            from core.album.decor import apply_decorations
+
+            if theme_accent is not None:
+                deco_accent = theme_accent
+            elif section_color is not None:
+                deco_accent = tuple(max(0, int(c * 0.5)) for c in section_color)
+            else:
+                deco_accent = (150, 40, 40)
+            img = apply_decorations(img, theme=theme, accent=deco_accent, frame=True, corners=True)
+        except Exception:  # noqa: BLE001 - decoration must never break the render
+            pass
     return img
 
 

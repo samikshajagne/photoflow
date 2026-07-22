@@ -57,6 +57,7 @@ _DENSITIES = [
 _THEMES = [
     ("Classic — geometric shapes (circles, ovals, diamonds)", "classic"),
     ("Natural — editorial layouts (hero + overlapping frames)", "natural"),
+    ("Editorial — full-bleed hero + grid, gold frame & flourishes", "editorial"),
 ]
 
 

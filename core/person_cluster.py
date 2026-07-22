@@ -22,7 +22,7 @@ normalizes defensively so cosine distance is well-defined.
 from __future__ import annotations
 
 import dataclasses
-from typing import Iterable
+from typing import Iterable, Optional
 
 import numpy as np
 
@@ -31,9 +31,16 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Max cosine distance (1 - cosine similarity) for a face to join a cluster.
-# 0 = identical direction, 1 = orthogonal. ~0.4 is a reasonable starting bar
-# for modern face embeddings; intended to be tuned on real data.
-DEFAULT_DISTANCE_MAX: float = 0.4
+# 0 = identical direction, 1 = orthogonal. InsightFace buffalo_l (ArcFace
+# w600k_r50, 512-d) embeddings are stable enough to use 0.55 for wedding
+# photos: same person at different angles / lighting typically lands at 0.35–0.50.
+# Using 0.40 was over-fragmenting (15 clusters for 45 faces in a wedding shoot).
+DEFAULT_DISTANCE_MAX: float = 0.55
+
+# Clusters with fewer than this many faces are treated as noise (background
+# guests, mis-detections) and filtered out before showing in the UI. A
+# cluster of 1 face from 1 photo is rarely a meaningful identity.
+DEFAULT_MIN_CLUSTER_SIZE: int = 2
 
 
 class PersonClusteringError(Exception):
@@ -95,12 +102,26 @@ class PersonClusterer:
         PersonClusteringError: if ``distance_max`` is out of range.
     """
 
-    def __init__(self, distance_max: float = DEFAULT_DISTANCE_MAX) -> None:
+    def __init__(
+        self,
+        distance_max: float = DEFAULT_DISTANCE_MAX,
+        method: str = "auto",
+        min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE,
+    ) -> None:
         if not 0.0 <= distance_max <= 2.0:
             raise PersonClusteringError(
                 f"distance_max must be in [0, 2], got {distance_max}"
             )
+        if min_cluster_size < 1:
+            raise PersonClusteringError(
+                f"min_cluster_size must be >= 1, got {min_cluster_size}"
+            )
         self.distance_max = float(distance_max)
+        self.min_cluster_size = int(min_cluster_size)
+        # "auto"  -> agglomerative (scipy) when available, else greedy
+        # "agglomerative" -> force agglomerative (error if scipy missing)
+        # "greedy" -> the original single-pass method
+        self.method = method
 
     def cluster(self, faces: Iterable[FaceRef]) -> list[PersonCluster]:
         """
@@ -114,6 +135,20 @@ class PersonClusterer:
         Returns:
             A list of :class:`PersonCluster`. Empty input yields ``[]``.
         """
+        faces = list(faces)
+
+        # Prefer agglomerative clustering (scipy): it corrects the greedy pass's
+        # early mistakes and doesn't need the number of people in advance. Falls
+        # back to greedy when scipy is unavailable or ``method="greedy"``.
+        if self.method != "greedy" and len(faces) >= 2:
+            agglomerative = self._cluster_agglomerative(faces)
+            if agglomerative is not None:
+                return agglomerative
+            if self.method == "agglomerative":
+                raise PersonClusteringError(
+                    "agglomerative clustering requires SciPy (pip install scipy)"
+                )
+
         clusters: list[_MutableCluster] = []
         for face in faces:
             unit = self._unit(face.vector)
@@ -131,11 +166,14 @@ class PersonClusterer:
 
         result = [c.freeze() for c in clusters]
         result.sort(key=lambda c: (-c.size, c.cluster_id))
+        # Filter out noise singletons before returning.
+        result = [c for c in result if c.size >= self.min_cluster_size]
         logger.info(
-            "Clustered %d face(s) into %d person cluster(s) (distance_max=%.2f).",
+            "Clustered %d face(s) into %d person cluster(s) (greedy, distance_max=%.2f, min_size=%d).",
             sum(c.size for c in result),
             len(result),
             self.distance_max,
+            self.min_cluster_size,
         )
         return result
 
@@ -149,6 +187,59 @@ class PersonClusterer:
     def _cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
         """Cosine distance in ``[0, 2]`` for unit vectors (1 - cosine sim)."""
         return float(1.0 - np.dot(a, b))
+
+    def _cluster_agglomerative(self, faces: list["FaceRef"]) -> Optional[list[PersonCluster]]:
+        """
+        Agglomerative (hierarchical) clustering via SciPy, or ``None`` if SciPy
+        isn't installed so the caller can fall back to greedy.
+
+        Average-linkage on cosine distance with a flat cut at ``distance_max``:
+        faces merge into a person while their mean cosine distance stays under the
+        threshold. Unlike the greedy pass, a later face can pull two tentative
+        clusters together, so early mistakes self-correct. Deterministic.
+        """
+        try:
+            from scipy.cluster.hierarchy import fcluster, linkage
+            from scipy.spatial.distance import pdist
+        except Exception:  # noqa: BLE001 - SciPy optional -> greedy fallback
+            return None
+
+        units = np.vstack([self._unit(f.vector) for f in faces]).astype(np.float64)
+        # Degenerate: identical/zero vectors -> pdist all zeros -> one cluster.
+        condensed = pdist(units, metric="cosine")
+        condensed = np.nan_to_num(condensed, nan=0.0, posinf=2.0, neginf=0.0)
+        linkage_matrix = linkage(condensed, method="average")
+        labels = fcluster(linkage_matrix, t=self.distance_max, criterion="distance")
+
+        # Group faces by label, build a PersonCluster per group.
+        groups: dict[int, list[FaceRef]] = {}
+        for face, label in zip(faces, labels):
+            groups.setdefault(int(label), []).append(face)
+
+        clusters: list[PersonCluster] = []
+        for members in groups.values():
+            centroid = np.mean(
+                np.vstack([self._unit(f.vector) for f in members]), axis=0
+            )
+            clusters.append(PersonCluster(cluster_id=0, faces=members, centroid=self._unit(centroid)))
+
+        # Largest-first, then re-number ids so they're stable/sequential.
+        clusters.sort(key=lambda c: -c.size)
+        for new_id, cluster in enumerate(clusters):
+            cluster.cluster_id = new_id
+
+        # Drop noise singletons (background faces detected only once).
+        clusters = [c for c in clusters if c.size >= self.min_cluster_size]
+
+        logger.info(
+            "Clustered %d face(s) into %d person cluster(s) "
+            "(agglomerative, distance_max=%.2f, min_size=%d).",
+            len(faces),
+            len(clusters),
+            self.distance_max,
+            self.min_cluster_size,
+        )
+        return clusters
 
 
 @dataclasses.dataclass

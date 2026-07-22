@@ -191,9 +191,17 @@ class AlbumOrchestrator:
             self._report_progress(f"Auto-editing {len(candidates)} candidate(s)…")
             self._apply_auto_edit(candidates, cache)
 
-        # Step: event segmentation (classification/naming arrives in Phase 3).
+        # Step: Vision Brain — extract (or reuse cached) per-photo features once
+        # (all faces + 5-pt landmarks + scene labels + colours). Everything below
+        # reads from this cache, so the API is hit at most once per photo.
+        brains = self._run_vision_brain(candidates, cache)
+
+        # Step: event segmentation, named from Vision scene labels when available
+        # (falls back to the colour heuristic / chronological label otherwise).
         self._report_progress("Building event timeline…")
-        project.events = self._build_events([r.source_path for r in candidates])
+        project.events = self._build_events(
+            [r.source_path for r in candidates], brains
+        )
 
         # Step: story sections (identity-free).
         self._report_progress("Assembling story sections…")
@@ -202,7 +210,7 @@ class AlbumOrchestrator:
         # Step: layout selection -> spreads. Feed cached face boxes so the crop
         # keeps faces visible and the renderer can honour them (see WS 3.1).
         self._report_progress("Selecting layouts…")
-        faces_by_path = self._faces_by_path(candidates, cache)
+        faces_by_path = self._faces_by_path(candidates, cache, brains)
         project.spreads = self.layout_selector.select(
             project, self.album_spec, faces_by_path=faces_by_path
         )
@@ -568,46 +576,125 @@ class AlbumOrchestrator:
         norm = float(np.linalg.norm(vec))
         return vec if norm == 0.0 else vec / norm
 
-    @staticmethod
-    def _faces_by_path(candidates, cache) -> dict:
+    def _run_vision_brain(self, candidates, cache) -> dict:
         """
-        ``source_path -> relative face boxes`` for the candidate pool, read from
-        the analysis cache's ``faces`` namespace (populated during the pipeline).
+        Extract (or reuse cached) a PhotoBrain per candidate photo, keyed by path.
 
-        Boxes are already relative ``(x, y, w, h)`` in ``[0, 1]``. Photos with no
-        cached faces are omitted, so layout simply falls back to a centered crop.
+        Uses Google Vision when ``GOOGLE_VISION_API_KEY`` is set, else the local
+        fallback. Best-effort: any failure returns ``{}`` so album generation
+        continues exactly as before.
         """
+        paths = [r.source_path for r in candidates]
+        if not paths:
+            return {}
+        try:
+            from core.brain_stage import analyze_and_cache
+        except Exception as exc:  # noqa: BLE001 - module import must not break album
+            logger.debug("Vision Brain unavailable: %s", exc)
+            return {}
+        self._report_progress(f"Vision analysis of {len(paths)} photo(s)…")
+        try:
+            return analyze_and_cache(
+                paths,
+                cache,
+                progress_cb=lambda done, total: self._report_progress(
+                    f"Vision analysis {done}/{total}…"
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - never break the album on vision
+            logger.warning("Vision Brain failed (%s); continuing without it.", exc)
+            return {}
+
+    @staticmethod
+    def _faces_by_path(candidates, cache, brains=None) -> dict:
+        """
+        ``source_path -> relative face boxes`` for the candidate pool.
+
+        Prefers the Vision Brain's boxes when available (it finds more faces, and
+        its 5-point landmarks give a better, chin-and-crown-safe box via
+        :func:`core.album.facecrop.face_box_from_landmarks`); otherwise falls back
+        to the pipeline's cached MediaPipe ``faces``. Boxes are relative
+        ``(x, y, w, h)`` in ``[0, 1]``; photos with none are omitted.
+        """
+        from core.album.facecrop import face_box_from_landmarks
+
+        brains = brains or {}
         faces: dict[str, tuple[tuple[float, float, float, float], ...]] = {}
-        if cache is None:
-            return faces
         for record in candidates:
             path = record.source_path
-            try:
-                regions = cache.get("faces", path)
-            except Exception:  # noqa: BLE001 - a cache miss must never break layout
-                regions = None
-            if not regions:
-                continue
-            boxes = tuple(
-                tuple(float(v) for v in box) for box in regions if len(box) == 4
-            )
+            boxes: tuple = ()
+
+            pb = brains.get(path)
+            pb_boxes = list(getattr(pb, "face_boxes", []) or []) if pb is not None else []
+            if pb_boxes:
+                landmarks = list(getattr(pb, "face_landmarks", []) or [])
+                collected: list[tuple[float, float, float, float]] = []
+                for i, box in enumerate(pb_boxes):
+                    lm_box = face_box_from_landmarks(landmarks[i]) if i < len(landmarks) else None
+                    chosen = lm_box
+                    if chosen is None and len(box) == 4:
+                        chosen = tuple(float(v) for v in box)
+                    if chosen is not None:
+                        collected.append(chosen)
+                boxes = tuple(collected)
+
+            if not boxes and cache is not None:
+                try:
+                    regions = cache.get("faces", path)
+                except Exception:  # noqa: BLE001 - a cache miss must never break layout
+                    regions = None
+                if regions:
+                    boxes = tuple(
+                        tuple(float(v) for v in box) for box in regions if len(box) == 4
+                    )
+
             if boxes:
                 faces[path] = boxes
         return faces
 
     @staticmethod
-    def _build_events(paths: list[str]) -> list[EventRecord]:
+    def _build_events(paths: list[str], brains: Optional[dict] = None) -> list[EventRecord]:
         if not paths:
             return []
+        brains = brains or {}
         timeline = build_timeline(paths)
         events: list[EventRecord] = []
         for seg in segment_events(timeline):
-            # Best-effort colour-based name (e.g. "Haldi"); falls back to the
-            # chronological label when the event isn't confidently classifiable.
-            try:
-                name = classify_event_name(dominant_color(list(seg.photos)))
-            except Exception:  # noqa: BLE001 - naming must never break generation
-                name = None
+            name = None
+            # -- Path 1: semantic name from Vision Brain scene labels (GPT-4o) --
+            seg_brains = [brains[p] for p in seg.photos if p in brains]
+            if seg_brains:
+                try:
+                    from core.event_classifier import classify_event_group
+
+                    result = classify_event_group(
+                        seg_brains,
+                        min_label_score=0.25,  # lower threshold for GPT-4o partial matches
+                    )
+                    # Accept label-sourced names OR high-confidence colour-derived names
+                    # (GPT-4o also returns dominant_colors which feed the colour path).
+                    if result.confidence > 0.3 and result.event_type:
+                        name = result.event_type
+                except Exception:  # noqa: BLE001 - naming must never break generation
+                    name = None
+
+            # -- Path 2: colour heuristic using the FULL 6-event classifier --
+            if name is None:
+                try:
+                    from core.album.event_classifier import event_name as _rich_event_name
+
+                    color = dominant_color(list(seg.photos))
+                    name = _rich_event_name(color, min_confidence=0.45)
+                except Exception:  # noqa: BLE001 - naming must never break generation
+                    name = None
+
+            # -- Path 3: last resort — old single-event colour heuristic --
+            if name is None:
+                try:
+                    name = classify_event_name(dominant_color(list(seg.photos)))
+                except Exception:  # noqa: BLE001
+                    name = None
+
             events.append(
                 EventRecord(
                     index=seg.index,

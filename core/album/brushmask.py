@@ -21,8 +21,8 @@ def brush_mask(
     size: tuple[int, int],
     seed: int = 0,
     *,
-    roughness: float = 0.10,
-    feather: float = 0.012,
+    roughness: float = 0.06,
+    feather: float = 0.02,
 ) -> Image.Image:
     """
     Return an ``L`` (grayscale) alpha mask with a rough, feathered edge.
@@ -50,14 +50,16 @@ def brush_mask(
     blur_r = max(1, round(short * roughness))
     base_blur = np.asarray(base.filter(ImageFilter.GaussianBlur(blur_r)), dtype=np.float32) / 255.0
 
-    # Low-frequency noise, upscaled smoothly.
-    ny, nx = max(2, h // 50), max(2, w // 50)
+    # Low-frequency noise, upscaled smoothly. A coarser grid (fewer cells) gives
+    # gentle undulations — a torn-paper edge — instead of a high-frequency splatter.
+    ny, nx = max(2, h // 90), max(2, w // 90)
     noise = rng.random((ny, nx)).astype(np.float32)
     noise_img = Image.fromarray((noise * 255).astype(np.uint8)).resize((w, h), Image.BICUBIC)
     noise_arr = np.asarray(noise_img, dtype=np.float32) / 255.0
 
-    # Perturb the boundary by the noise and threshold -> irregular edge.
-    field = base_blur + (noise_arr - 0.5) * roughness * 3.2
+    # Perturb the boundary by the noise and threshold -> irregular edge. A smaller
+    # amplitude keeps the edge subtle rather than a jagged splatter.
+    field = base_blur + (noise_arr - 0.5) * roughness * 1.8
     alpha = ((field > 0.5).astype(np.uint8)) * 255
     mask = Image.fromarray(alpha, "L")
 

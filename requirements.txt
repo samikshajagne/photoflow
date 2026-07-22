@@ -14,6 +14,8 @@
 # - psd-tools: write layered .psd album spreads directly (core/album/raster.py),
 #   enabling PNG/JPG/PDF/PSD album export with no Photoshop required.
 # - PyQt6: the desktop UI (ui_qt/).
+# - openai: GPT-4o Vision API for scene understanding (core/vision_brain.py).
+# - python-dotenv: loads OPENAI_API_KEY from .env at the project root.
 
 PyYAML>=6.0,<7.0
 Pillow>=10.0,<13.0
@@ -25,3 +27,5 @@ mediapipe>=0.10,<1.0
 insightface>=0.7,<0.8
 onnxruntime>=1.16,<2.0
 PyQt6>=6.5,<7.0
+openai>=1.30,<2.0
+python-dotenv>=1.0,<2.0

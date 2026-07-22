@@ -31,6 +31,15 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# Load .env from the project root so OPENAI_API_KEY (and any other secrets)
+# are available as environment variables before any module reads them.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+
+    _load_dotenv(Path(__file__).parent / ".env", override=False)
+except ImportError:
+    pass  # python-dotenv not installed; env vars must be set manually.
+
 from core.pipeline import PhotoFlowPipeline, PipelineError, PipelineResult
 from utils.config import ConfigError, load_config
 from utils.logger import get_logger, setup_logging

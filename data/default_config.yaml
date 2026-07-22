@@ -41,5 +41,5 @@ scoring_weights:
   exposure_weight: 0.2
 
 performance:
-  analysis_max_edge_px: 1024   # downsample target for analysis (not file output)
+  analysis_max_edge_px: 1920   # 1920 catches small distant faces in group/ceremony shots
   worker_pool_size: null        # null = auto-detect (cpu_count - 1) in later milestones
