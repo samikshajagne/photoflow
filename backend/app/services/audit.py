@@ -21,6 +21,29 @@ from app.models.audit import FORBIDDEN_METADATA_KEYS, AuditLog
 
 REDACTED = "[redacted]"
 
+
+class AuditAction:
+    """
+    The vocabulary of recorded events.
+
+    Constants rather than an enum, because ``audit_logs.action`` is a text
+    column on purpose: a new event type should be a new line here, not a
+    migration against a table that by then holds years of history.
+    """
+
+    LOGIN_SUCCESS = "LOGIN_SUCCESS"
+    LOGIN_FAILURE = "LOGIN_FAILURE"
+    LOGOUT = "LOGOUT"
+    REFRESH_SUCCESS = "REFRESH_SUCCESS"
+    REFRESH_REUSE_DETECTED = "REFRESH_REUSE_DETECTED"
+    ADMIN_CREATED = "ADMIN_CREATED"
+    CLIENT_CREATED = "CLIENT_CREATED"
+    USER_DISABLED = "USER_DISABLED"
+    USER_ENABLED = "USER_ENABLED"
+    PASSWORD_CHANGED = "PASSWORD_CHANGED"
+    RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"
+    SIGNING_KEY_GENERATED = "SIGNING_KEY_GENERATED"
+
 # Substrings that make a key suspicious regardless of its full name.
 _SUSPICIOUS_FRAGMENTS = ("password", "secret", "token", "key", "credential", "authorization")
 

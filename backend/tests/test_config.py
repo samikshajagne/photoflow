@@ -32,6 +32,10 @@ def _settings(**overrides) -> Settings:
         "api_base_url": "https://api.photoflow.example",
         "jwt_secret": GOOD_SECRET,
         "cors_origins": ["https://admin.photoflow.example"],
+        # Phase 3 added two more production requirements; supplying them here
+        # keeps each test focused on the one setting it is actually about.
+        "trusted_hosts": ["api.photoflow.example"],
+        "allow_single_instance_rate_limit": True,
         "_env_file": None,
     }
     base.update(overrides)

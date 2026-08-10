@@ -17,8 +17,10 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api import health as infra_health
 from app.api.v1.router import api_router
@@ -26,6 +28,8 @@ from app.config import Settings, get_settings
 from app.database.session import check_database, dispose_engine
 from app.errors import register_exception_handlers
 from app.logging_config import configure_logging, new_request_id, request_id_var
+from app.security.rate_limit import RateLimiter, build_backend
+from app.security.signing import SigningService
 from app.version import BACKEND_VERSION
 
 logger = logging.getLogger(__name__)
@@ -49,6 +53,12 @@ async def lifespan(app: FastAPI):
         BACKEND_VERSION,
         settings.environment.value,
         settings.safe_database_target(),  # host/db only, never credentials
+    )
+    logger.info(
+        "Rate limiting: enabled=%s backend=%s | entitlement signing: %s",
+        settings.rate_limit_enabled,
+        settings.rate_limit_backend,
+        "configured" if app.state.signing.available else "not configured",
     )
     if not check_database():
         logger.warning(
@@ -78,6 +88,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None if settings.is_production else "/openapi.json",
     )
     app.state.settings = settings
+    # Built once per application, not per request: an in-memory limiter that is
+    # rebuilt on each call counts to one forever.
+    app.state.rate_limiter = RateLimiter(build_backend(settings))
+    # Constructed at startup so a malformed key is a boot failure with a clear
+    # message, rather than a 500 on the first entitlement request in Phase 4.
+    app.state.signing = SigningService.from_settings(settings)
+
+    # Trusted hosts. A Host header the application echoes into a redirect or a
+    # password-reset link is a cache-poisoning and phishing vector, so in
+    # production the set of names this API answers to is explicit. Left open on
+    # a laptop, where the host is localhost, an IP, or whatever a tunnel decided.
+    if settings.trusted_hosts:
+        app.add_middleware(
+            TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts
+        )
 
     # CORS: an explicit allow-list, never "*". The desktop client is not a
     # browser and is unaffected by CORS; this exists for the local admin
@@ -111,6 +136,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request_id_var.reset(token)
 
     @app.middleware("http")
+    async def limit_request_body(request: Request, call_next):
+        """
+        Refuse oversized requests before they are read.
+
+        Every Phase 3 endpoint takes a small JSON object; nothing legitimately
+        approaches 1 MiB. Checking ``Content-Length`` rejects the honest case
+        cheaply. A client that lies about or omits the header is not stopped
+        here -- that needs a streaming counter, and in practice the reverse
+        proxy in front of this app enforces the real ceiling. This is defence in
+        depth, not the only defence, and it is worth being clear about which.
+        """
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit():
+            if int(declared) > settings.max_request_body_bytes:
+                return JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={
+                        "detail": "Request body too large.",
+                        "request_id": request_id_var.get(),
+                    },
+                )
+        return await call_next(request)
+
+    @app.middleware("http")
     async def security_headers(request: Request, call_next):
         """
         Baseline response headers.
@@ -123,6 +172,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
+        # This API returns JSON only. A restrictive CSP costs nothing here and
+        # blunts the damage if a future endpoint ever reflects HTML.
+        response.headers.setdefault(
+            "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
+        )
+        # Browser features this API has no use for.
+        response.headers.setdefault(
+            "Permissions-Policy", "geolocation=(), microphone=(), camera=()"
+        )
+        # Note: the ``Server`` header is *not* set here. uvicorn writes its own
+        # at the transport layer, after middleware, so setting one here produces
+        # two Server headers rather than replacing it. Suppress uvicorn's with
+        # `--no-server-header` (or `server_header=False`), which is what the
+        # documented run commands do -- see backend/README.md.
         if settings.is_production:
             response.headers.setdefault(
                 "Strict-Transport-Security", "max-age=31536000; includeSubDomains"

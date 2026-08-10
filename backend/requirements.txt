@@ -22,6 +22,7 @@ psycopg[binary]>=3.1,<4.0
 # --- Configuration and validation -------------------------------------------- #
 pydantic>=2.7,<3.0
 pydantic-settings>=2.4,<3.0
+email-validator>=2.1,<3.0   # pydantic's EmailStr on request models
 
 # --- Security ---------------------------------------------------------------- #
 # Argon2id, used directly rather than through passlib — see app/security/passwords.py
@@ -29,3 +30,7 @@ pydantic-settings>=2.4,<3.0
 # against current releases).
 argon2-cffi>=23.1,<26.0
 PyJWT>=2.9,<3.0
+# Ed25519 for entitlement and release-manifest signing. Distinct from the JWT
+# secret on purpose: the desktop app must verify without being able to mint.
+# See app/security/signing.py.
+cryptography>=42.0,<47.0

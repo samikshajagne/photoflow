@@ -68,6 +68,8 @@ class TestApplicationStartup:
             api_base_url="https://api.photoflow.example",
             jwt_secret="y" * 48,
             cors_origins=["https://admin.photoflow.example"],
+            trusted_hosts=["api.photoflow.example"],
+            allow_single_instance_rate_limit=True,
             _env_file=None,
         )
         app = create_app(production)

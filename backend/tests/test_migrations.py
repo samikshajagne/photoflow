@@ -117,6 +117,8 @@ class TestMigrationGuards:
             # test would pass without ever reaching the guard under test.
             "PHOTOFLOW_DEBUG": "false",
             "PHOTOFLOW_CORS_ORIGINS": "https://admin.example.com",
+            "PHOTOFLOW_TRUSTED_HOSTS": "api.example.com",
+            "PHOTOFLOW_ALLOW_SINGLE_INSTANCE_RATE_LIMIT": "true",
             # PHOTOFLOW_MIGRATION_CONFIRM deliberately absent.
         }
         result = subprocess.run(

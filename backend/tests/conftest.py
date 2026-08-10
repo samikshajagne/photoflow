@@ -136,6 +136,43 @@ def client(db):
 # Object factories
 # --------------------------------------------------------------------------- #
 @pytest.fixture
+def settings_for_test(_test_environment):
+    """The settings the test app is running with (issuer, audience, secret)."""
+    if not TEST_DATABASE_URL:
+        pytest.skip("PHOTOFLOW_TEST_DATABASE_URL is not set")
+    from app.config import get_settings
+
+    return get_settings()
+
+
+@pytest.fixture
+def admin_client(db, client, make_user):
+    """
+    A TestClient whose requests carry a valid ADMIN bearer token.
+
+    Returns ``(client, headers, admin_user)`` so a test can also assert on the
+    administrator's own row.
+    """
+    from app.models.enums import UserRole
+    from app.security.tokens import create_access_token
+
+    admin = make_user(role=UserRole.ADMIN, name="Owner")
+    token = create_access_token(user_id=admin.id, role=admin.role.value)
+    return client, {"Authorization": f"Bearer {token}"}, admin
+
+
+@pytest.fixture
+def client_role_headers(db, make_user):
+    """Bearer headers for an ordinary CLIENT account."""
+    from app.models.enums import UserRole
+    from app.security.tokens import create_access_token
+
+    user = make_user(role=UserRole.CLIENT)
+    token = create_access_token(user_id=user.id, role=user.role.value)
+    return {"Authorization": f"Bearer {token}"}, user
+
+
+@pytest.fixture
 def make_user(db):
     """Create a persisted user. Unique email per call, so tests cannot collide."""
     from app.models.enums import UserRole, UserStatus
@@ -151,7 +188,7 @@ def make_user(db):
         name: str = "Test User",
     ) -> User:
         user = User(
-            email=email or f"user-{uuid.uuid4().hex[:12]}@example.test",
+            email=email or f"user-{uuid.uuid4().hex[:12]}@example.com",
             name=name,
             password_hash=hash_password(password),
             role=role,

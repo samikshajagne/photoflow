@@ -58,15 +58,15 @@ class TestUser:
         assert abs(first.id.int - second.id.int) > 10**20
 
     def test_email_is_normalised_to_lowercase(self, db, make_user):
-        user = make_user(email="  Studio@Example.TEST  ")
-        assert user.email == "studio@example.test"
+        user = make_user(email="  Studio@Example.COM  ")
+        assert user.email == "studio@example.com"
 
     def test_email_is_unique_case_insensitively(self, db, make_user):
-        make_user(email="dup@example.test")
+        make_user(email="dup@example.com")
         db.flush()
         # The factory flushes, so the violation surfaces from this call itself.
         with pytest.raises(IntegrityError):
-            make_user(email="DUP@Example.Test")
+            make_user(email="DUP@Example.Com")
 
     def test_password_hash_is_never_the_plaintext(self, db, make_user):
         """Belt and braces against a future refactor writing the raw password."""
@@ -76,8 +76,8 @@ class TestUser:
 
     def test_repr_does_not_leak_the_email(self, db, make_user):
         """Reprs end up in logs and tracebacks; email is personal data."""
-        user = make_user(email="private@example.test")
-        assert "private@example.test" not in repr(user)
+        user = make_user(email="private@example.com")
+        assert "private@example.com" not in repr(user)
 
 
 class TestLicense:

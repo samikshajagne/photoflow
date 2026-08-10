@@ -19,15 +19,21 @@ Related reading: [`docs/PRODUCTION_ARCHITECTURE_AUDIT.md`](PRODUCTION_ARCHITECTU
 
 ## Status
 
-**Phase 2 complete — foundation only, not deployed.**
+**Phase 3 complete — authentication and security foundation, not deployed.**
 
-Done: application structure, environment-based configuration, PostgreSQL
-connection, Alembic with a reproducible initial migration, all nine core models,
-password hashing, token strategy, current-user and role dependencies, health
-endpoints, structured logging, safe error handling, 111 passing tests.
+Phase 2 built the structure: environment-based configuration, PostgreSQL, Alembic,
+nine models, password hashing, token strategy, health endpoints, structured
+logging, safe error handling.
 
-Not done, on purpose: login endpoints (Phase 3), licence workflow (Phase 4),
-credit workflow (Phase 4), admin dashboard (Phase 6), any deployment.
+Phase 3 added the authentication API (`login` / `refresh` / `logout` / `me`),
+refresh-token rotation with reuse detection, admin-only account management,
+rate limiting on the authentication endpoints, the Ed25519 entitlement-signing
+infrastructure, an operator CLI for bootstrapping the first administrator and
+generating signing keys, security audit events, and request hardening
+(trusted hosts, body limits, security headers). 250 passing tests.
+
+Not done, on purpose: licence workflow (Phase 4), credit workflow (Phase 4),
+admin dashboard UI (Phase 6), public signup (not planned), any deployment.
 
 ---
 
@@ -69,6 +75,24 @@ Two boundaries that are not negotiable:
 
 Nothing here is done yet; this is the checklist for when we do it.
 
+### Operator commands
+
+Run from `backend/` with the virtual environment active. They act on the
+database and configuration the current environment selects — the same
+`PHOTOFLOW_*` variables the server reads, so there is no second place for a
+target to drift.
+
+```powershell
+python -m app.cli create-admin            # prompts; no --password flag exists
+python -m app.cli generate-signing-key    # prints a keypair; writes nothing
+python -m app.cli show-config             # effective config, secrets redacted
+```
+
+There is deliberately **no HTTP endpoint** that creates administrators. Anything
+reachable over HTTPS that can mint an admin is one bug away from being an
+unauthenticated privilege-escalation route; requiring shell access to the host is
+a much stronger boundary and costs one command, once.
+
 ### Must be true before the first production deploy
 
 - [ ] A Neon **production** branch exists, separate from `dev`, and its URL has
@@ -77,6 +101,18 @@ Nothing here is done yet; this is the checklist for when we do it.
       provider's secret store — not in a file, not in the repository.
 - [ ] `PHOTOFLOW_ENVIRONMENT=production`, `PHOTOFLOW_DEBUG=false`,
       `PHOTOFLOW_LOG_JSON=true`.
+- [ ] `PHOTOFLOW_TRUSTED_HOSTS` lists the real hostnames.
+- [ ] An Ed25519 keypair has been generated and the **private** key is in the
+      secret store — not on a laptop, not in the repository, not in the
+      installer. The public key is recorded somewhere it can be compiled into
+      the desktop app in Phase 4.
+- [ ] Rate limiting: either a Redis backend, or
+      `PHOTOFLOW_ALLOW_SINGLE_INSTANCE_RATE_LIMIT=true` recording that this
+      deployment is genuinely one instance. The application refuses to start
+      otherwise.
+- [ ] uvicorn runs with `--no-server-header`.
+- [ ] The first administrator has been created with `python -m app.cli
+      create-admin` against the production database, once.
 - [ ] `PHOTOFLOW_API_BASE_URL` is the real HTTPS URL, and `PHOTOFLOW_CORS_ORIGINS`
       lists explicit origins.
 - [ ] TLS terminates in front of the app; plain HTTP is redirected or refused.
@@ -84,12 +120,13 @@ Nothing here is done yet; this is the checklist for when we do it.
       once, deliberately, with the printed target read before confirming.
 - [ ] A backup and restore has been *tested*, not merely configured. An untested
       backup is a hope.
-- [ ] Rate limiting is in place on anything that grants value — Phase 4, but it
-      must exist before real licences do.
+- [ ] Rate limiting is extended to anything else that grants value as Phase 4
+      adds it (licence activation especially).
 
-The application refuses to start if the first four are wrong, which is the point:
-a misconfigured production backend should fail visibly at deploy time rather than
-quietly issue tokens signed with a key published on GitHub.
+The application refuses to start if the configuration items above are wrong,
+which is the point: a misconfigured production backend should fail visibly at
+deploy time rather than quietly issue tokens signed with a key published on
+GitHub, or accept unlimited password guesses.
 
 ### Choices deliberately left open
 
@@ -111,3 +148,45 @@ The backend introduces no new company-name strings beyond the API's `app_name`
 ("PhotoFlow API", a product name rather than a company one), so it does not add
 to that work — but the rename remains a blocker to be swept across the whole
 repository before release, not a thing to do piecemeal.
+
+
+---
+
+## Security model in one page
+
+Five keys, four of them secret, and confusing any two is the mistake to avoid.
+
+| | Kind | Held by | Protects |
+|---|---|---|---|
+| `PHOTOFLOW_DATABASE_URL` | connection string | backend only | everything |
+| `PHOTOFLOW_JWT_SECRET` | HS256 symmetric | backend only | session access tokens |
+| Ed25519 **private** key | asymmetric | backend only | signs entitlements and release manifests |
+| Ed25519 **public** key | asymmetric | desktop app | lets the app verify without being able to mint |
+| `PHOTOFLOW_STATE_KEY` | HMAC | inside the installer | the *client's own* cached trial state |
+
+The third and fourth are the pair that makes offline entitlement checking safe.
+The fifth is a different mechanism entirely, already in `core/licensing.py`,
+which Phase 3 does not touch and Phase 4 does not remove: it stops a customer
+editing their cached expiry in a text editor, and its docstring is honest that
+the key ships in the binary and can be extracted.
+
+**Client secret vs server secret vs public verification key** — the distinction
+the Phase 3 brief asked to be made explicit:
+
+- A **client secret** (`PHOTOFLOW_STATE_KEY`) is not really a secret. It is on
+  hardware the customer owns and can be extracted by anyone determined. It raises
+  the effort of casual tampering and nothing more. Never use one to protect
+  something that matters.
+- A **server secret** (`DATABASE_URL`, `JWT_SECRET`, the Ed25519 private key) is
+  a real secret. It exists on infrastructure you control, can be rotated, and
+  must never be shipped anywhere a customer can read it.
+- A **public verification key** is not a secret at all, and publishing it is
+  the point. It is what lets an untrusted client check a server's claim without
+  being able to fabricate one.
+
+The threat model follows from that: the desktop app is an untrusted client on
+hardware the customer owns, so it *asserts* and the backend *decides*. What none
+of this prevents is someone patching the binary to skip the checks — unsolvable
+for desktop software, as `core/licensing.py` says plainly. The defence is that
+anything expensive requires a server response, so patching the client gains
+nothing.

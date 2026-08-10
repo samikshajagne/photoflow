@@ -55,6 +55,8 @@ class TokenClaims:
     token_type: TokenType
     expires_at: datetime
     jti: str
+    audience: str = ""
+    session_id: str = ""
 
 
 def create_access_token(
@@ -63,14 +65,32 @@ def create_access_token(
     role: str,
     settings: Settings | None = None,
     expires_delta: timedelta | None = None,
+    session_id: uuid.UUID | None = None,
+    audience: str | None = None,
     extra_claims: dict[str, Any] | None = None,
 ) -> str:
     """
     Mint a signed access token.
 
-    ``jti`` is included so an individual token can be denylisted later without
-    revoking every session the user has, and ``iss`` so a token minted by a
-    different PhotoFlow service cannot be replayed here.
+    What each non-obvious claim is for:
+
+    * ``iss`` -- a token minted by some other PhotoFlow service cannot be
+      replayed here.
+    * ``aud`` -- and a token minted *by* this service for a different consumer
+      cannot be either. Today there is one audience; when the admin dashboard
+      gets its own token class this is what stops a desktop token reaching an
+      admin endpoint, without needing a second signing key.
+    * ``jti`` -- lets one token be denylisted without revoking every session the
+      user has.
+    * ``sid`` -- the refresh-token family this access token was minted from, so
+      revoking a session can (in a later phase) also reject access tokens still
+      inside their 30-minute window.
+
+    Note what is deliberately *absent*: no email, no name, no licence state. A
+    JWT is signed, not encrypted -- anyone holding it can read every claim, and
+    tokens end up in logs, proxies and crash reports. The role is included only
+    because the value is already visible to the user it describes, and it is
+    still re-read from the database on every request rather than trusted.
     """
     settings = settings or get_settings()
     now = datetime.now(timezone.utc)
@@ -82,26 +102,41 @@ def create_access_token(
         "role": role,
         "type": TokenType.ACCESS.value,
         "iss": settings.jwt_issuer,
+        "aud": audience or settings.jwt_audience,
         "iat": int(now.timestamp()),
         "nbf": int(now.timestamp()),
         "exp": int(expiry.timestamp()),
         "jti": secrets.token_urlsafe(16),
     }
+    if session_id is not None:
+        payload["sid"] = str(session_id)
     if extra_claims:
         # Never let a caller overwrite a security-relevant claim.
-        reserved = {"sub", "role", "type", "iss", "iat", "nbf", "exp", "jti"}
+        reserved = {
+            "sub", "role", "type", "iss", "aud", "iat", "nbf", "exp", "jti", "sid",
+        }
         payload.update({k: v for k, v in extra_claims.items() if k not in reserved})
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
 def decode_access_token(
-    token: str, settings: Settings | None = None
+    token: str,
+    settings: Settings | None = None,
+    *,
+    audience: str | None = None,
 ) -> TokenClaims:
     """
     Verify a token and return its claims, or raise :class:`TokenError`.
 
-    ``algorithms`` is pinned to the configured algorithm -- passing the list from
-    the token's own header is the classic "alg: none" forgery.
+    Every check here exists because skipping it is a known, named attack:
+
+    * ``algorithms`` is pinned to the configured algorithm rather than read from
+      the token's own header -- reading the header is the ``alg: none`` forgery,
+      and with an asymmetric key it is also the RS256→HS256 confusion attack.
+    * ``issuer`` and ``audience`` are verified, not merely present.
+    * ``exp`` is required, so a token minted without one cannot live forever.
+    * The ``type`` claim is checked, so a refresh token cannot be presented as a
+      bearer credential.
     """
     settings = settings or get_settings()
     try:
@@ -110,7 +145,8 @@ def decode_access_token(
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
             issuer=settings.jwt_issuer,
-            options={"require": ["exp", "sub", "iss"]},
+            audience=audience or settings.jwt_audience,
+            options={"require": ["exp", "sub", "iss", "aud"]},
         )
     except jwt.ExpiredSignatureError as exc:
         raise TokenError("Token has expired.") from exc
@@ -132,6 +168,8 @@ def decode_access_token(
         token_type=TokenType.ACCESS,
         expires_at=datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
         jti=str(payload.get("jti", "")),
+        audience=str(payload.get("aud", "")),
+        session_id=str(payload.get("sid", "")),
     )
 
 

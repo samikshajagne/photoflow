@@ -25,24 +25,24 @@ PASSWORD = "correct-horse-battery-staple"
 
 class TestPasswordAuthentication:
     def test_correct_credentials_authenticate(self, db, make_user):
-        user = make_user(email="studio@example.test", password=PASSWORD)
+        user = make_user(email="studio@example.com", password=PASSWORD)
         result = PasswordAuthenticationProvider().authenticate(
-            db, email="studio@example.test", password=PASSWORD
+            db, email="studio@example.com", password=PASSWORD
         )
         assert result is not None and result.id == user.id
 
     def test_email_matching_is_case_insensitive(self, db, make_user):
-        make_user(email="studio@example.test", password=PASSWORD)
+        make_user(email="studio@example.com", password=PASSWORD)
         result = PasswordAuthenticationProvider().authenticate(
-            db, email="  Studio@Example.TEST ", password=PASSWORD
+            db, email="  Studio@Example.COM ", password=PASSWORD
         )
         assert result is not None
 
     def test_wrong_password_fails(self, db, make_user):
-        make_user(email="studio@example.test", password=PASSWORD)
+        make_user(email="studio@example.com", password=PASSWORD)
         assert (
             PasswordAuthenticationProvider().authenticate(
-                db, email="studio@example.test", password="wrong-password-here"
+                db, email="studio@example.com", password="wrong-password-here"
             )
             is None
         )
@@ -50,18 +50,18 @@ class TestPasswordAuthentication:
     def test_unknown_email_fails(self, db):
         assert (
             PasswordAuthenticationProvider().authenticate(
-                db, email="nobody@example.test", password=PASSWORD
+                db, email="nobody@example.com", password=PASSWORD
             )
             is None
         )
 
     def test_disabled_account_cannot_authenticate(self, db, make_user):
         make_user(
-            email="gone@example.test", password=PASSWORD, status=UserStatus.DISABLED
+            email="gone@example.com", password=PASSWORD, status=UserStatus.DISABLED
         )
         assert (
             PasswordAuthenticationProvider().authenticate(
-                db, email="gone@example.test", password=PASSWORD
+                db, email="gone@example.com", password=PASSWORD
             )
             is None
         )

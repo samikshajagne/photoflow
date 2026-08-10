@@ -47,7 +47,10 @@ class Environment(str, enum.Enum):
 
 
 # The value shipped in .env.example. Refused in production; see _check_production.
-PLACEHOLDER_JWT_SECRET = "dev-only-insecure-change-me"
+# Padded past 32 bytes so PyJWT does not emit an InsecureKeyLengthWarning on
+# every development request -- a warning developers learn to ignore is a warning
+# that will not be noticed when it matters.
+PLACEHOLDER_JWT_SECRET = "dev-only-insecure-change-me-0000000000"
 
 
 class ConfigurationError(RuntimeError):
@@ -98,8 +101,53 @@ class Settings(BaseSettings):
     jwt_secret: str = PLACEHOLDER_JWT_SECRET
     jwt_algorithm: str = "HS256"
     jwt_issuer: str = "photoflow-api"
+    # The audience a token is minted for. Today there is one; when the admin
+    # dashboard gets its own token class, an access token minted for the desktop
+    # app must not be accepted by an admin endpoint, and `aud` is how that is
+    # enforced without a second signing key.
+    jwt_audience: str = "photoflow-desktop"
     access_token_ttl_minutes: int = 30
     refresh_token_ttl_days: int = 30
+
+    # --- Ed25519 signing ------------------------------------------------------ #
+    # Entitlement tokens and release manifests are signed with Ed25519, NOT with
+    # jwt_secret. The desktop app must be able to *verify* offline without being
+    # able to *mint* -- an HS256 secret compiled into a Windows binary is a
+    # shared secret with every customer who owns a hex editor.
+    #
+    # Both are base64 (standard, with padding) of the raw 32-byte key.
+    # The private key belongs in the hosting provider's secret store and must
+    # never appear in the repository, in .env.example, or in any API response.
+    signing_private_key: str = ""
+    signing_public_key: str = ""
+    # Optional: read the private key from a file instead of an env var, for
+    # hosts that mount secrets as files rather than injecting them.
+    signing_private_key_file: str = ""
+
+    # --- Rate limiting -------------------------------------------------------- #
+    rate_limit_enabled: bool = True
+    # "memory" today; "redis" once there is more than one backend instance.
+    rate_limit_backend: str = "memory"
+    rate_limit_redis_url: str = ""
+    # Login: attempts per identity (and per IP) inside the window.
+    rate_limit_login_attempts: int = 5
+    rate_limit_login_window_seconds: int = 300
+    # Refresh is called routinely by every running client, so it gets a much
+    # higher ceiling -- it is a runaway-client guard, not an anti-guessing one.
+    rate_limit_refresh_attempts: int = 30
+    rate_limit_refresh_window_seconds: int = 300
+    # Explicit acknowledgement that this deployment runs exactly one instance and
+    # a per-process limiter is therefore accurate. Required to run production on
+    # the memory backend, so scaling out cannot silently weaken the limit.
+    allow_single_instance_rate_limit: bool = False
+
+    # --- Request hardening ---------------------------------------------------- #
+    # Hosts this API will answer to. Empty means "any", which is correct on a
+    # laptop and refused in production (see _check_production).
+    trusted_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # 1 MiB. No Phase 3 endpoint accepts anything close to this; the limit exists
+    # so an unauthenticated caller cannot stream gigabytes into the process.
+    max_request_body_bytes: int = 1_048_576
 
     # --- Feature flags ------------------------------------------------------- #
     # Credits ship as schema only until pricing is validated. The tables exist so
@@ -113,13 +161,22 @@ class Settings(BaseSettings):
     # ----------------------------------------------------------------------- #
     # Validators
     # ----------------------------------------------------------------------- #
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "trusted_hosts", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
         """Accept ``a,b`` from the environment as well as a real list."""
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("rate_limit_backend")
+    @classmethod
+    def _check_rate_limit_backend(cls, value: str) -> str:
+        allowed = {"memory", "redis"}
+        lowered = value.strip().lower()
+        if lowered not in allowed:
+            raise ValueError(f"PHOTOFLOW_RATE_LIMIT_BACKEND must be one of {sorted(allowed)}")
+        return lowered
 
     @field_validator("database_url")
     @classmethod
@@ -168,6 +225,34 @@ class Settings(BaseSettings):
             )
         if not self.api_base_url.startswith("https://"):
             problems.append("PHOTOFLOW_API_BASE_URL must use https:// in production")
+        if not self.trusted_hosts:
+            problems.append(
+                "PHOTOFLOW_TRUSTED_HOSTS must list the hostnames this API answers to"
+            )
+        if "*" in self.trusted_hosts:
+            problems.append("PHOTOFLOW_TRUSTED_HOSTS must not contain '*' in production")
+        if not self.rate_limit_enabled:
+            problems.append(
+                "PHOTOFLOW_RATE_LIMIT_ENABLED must be true in production -- "
+                "unlimited password guessing against real accounts is not a "
+                "configuration option"
+            )
+        if self.rate_limit_backend == "memory" and not self.allow_single_instance_rate_limit:
+            # A single instance is a legitimate way to start, so this is opt-out
+            # rather than forbidden. But an in-memory counter multiplies the real
+            # limit by the instance count the moment you scale out, silently and
+            # with no error -- so running it in production has to be a decision
+            # someone made, not a default nobody revisited.
+            problems.append(
+                "PHOTOFLOW_RATE_LIMIT_BACKEND=memory is per-process: with more "
+                "than one instance the effective limit multiplies. Set 'redis' "
+                "and PHOTOFLOW_RATE_LIMIT_REDIS_URL, or set "
+                "PHOTOFLOW_ALLOW_SINGLE_INSTANCE_RATE_LIMIT=true to accept it"
+            )
+        if self.rate_limit_backend == "redis" and not self.rate_limit_redis_url:
+            problems.append(
+                "PHOTOFLOW_RATE_LIMIT_REDIS_URL is required when the backend is 'redis'"
+            )
         if problems:
             raise ValueError(
                 "Unsafe production configuration: " + "; ".join(problems)
@@ -184,6 +269,31 @@ class Settings(BaseSettings):
     @property
     def is_test(self) -> bool:
         return self.environment is Environment.TEST
+
+    def resolve_signing_private_key(self) -> str:
+        """
+        The base64 Ed25519 private key, or ``""`` when none is configured.
+
+        Two sources, in priority order: ``PHOTOFLOW_SIGNING_PRIVATE_KEY_FILE``
+        (for hosts that mount secrets as files) and then
+        ``PHOTOFLOW_SIGNING_PRIVATE_KEY``. The file wins because a host that
+        mounts a secret file is expressing a deliberate choice, and because a
+        stale environment variable left over from an earlier deploy is the more
+        likely accident of the two.
+
+        Returns a value, never logs one. Nothing else in the codebase reads
+        these fields directly.
+        """
+        if self.signing_private_key_file:
+            path = Path(self.signing_private_key_file)
+            if path.is_file():
+                return path.read_text(encoding="utf-8").strip()
+        return self.signing_private_key.strip()
+
+    @property
+    def signing_configured(self) -> bool:
+        """Whether entitlement signing is available in this process."""
+        return bool(self.resolve_signing_private_key())
 
     def safe_database_target(self) -> str:
         """
