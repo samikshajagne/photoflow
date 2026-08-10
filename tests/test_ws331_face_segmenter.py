@@ -57,10 +57,12 @@ def test_apply_mask_sets_alpha():
 def test_cutout_from_faces_unions_and_falls_back():
     img = Image.new("RGB", (400, 400), (100, 100, 100))
     two = ((0.2, 0.3, 0.15, 0.15), (0.65, 0.3, 0.15, 0.15))
-    out = cutout_from_faces(img, two)
+    # use_rembg=False forces the ellipse-union path this test targets; otherwise,
+    # when rembg is installed, a flat image yields a different (real-model) matte.
+    out = cutout_from_faces(img, two, use_rembg=False)
     assert out is not None and out.mode == "RGBA"
     # Both face centres are opaque (union of two masks).
     assert out.getpixel((int(0.275 * 400), int(0.375 * 400)))[3] > 200
     assert out.getpixel((int(0.725 * 400), int(0.375 * 400)))[3] > 200
     # No faces -> None (fallback).
-    assert cutout_from_faces(img, ()) is None
+    assert cutout_from_faces(img, (), use_rembg=False) is None

@@ -1,31 +1,45 @@
-# PhotoFlow runtime dependencies.
+# PhotoFlow — runtime dependencies (what a shipping build needs)
 #
-# - PyYAML: config loading (utils/config.py).
-# - Pillow + ImageHash: image loading and perceptual hashing
-#   (core/duplicate_detector.py).
-# - OpenCV (headless) + NumPy: blur (Variance-of-Laplacian), brightness/
-#   contrast, and face image loading (core/blur_detector.py,
-#   core/quality_scorer.py, core/face_detector.py). Headless because
-#   PhotoFlow needs no GUI windowing.
-# - MediaPipe: face detection (core/face_detector.py).
-# - InsightFace + onnxruntime: face embeddings for person/identity clustering
-#   (core/insightface_backend.py, used by the album orchestrator). Required for
-#   person-aware albums; the feature degrades gracefully if absent.
-# - psd-tools: write layered .psd album spreads directly (core/album/raster.py),
-#   enabling PNG/JPG/PDF/PSD album export with no Photoshop required.
-# - PyQt6: the desktop UI (ui_qt/).
-# - openai: GPT-4o Vision API for scene understanding (core/vision_brain.py).
-# - python-dotenv: loads OPENAI_API_KEY from .env at the project root.
+# Deliberately minimal: this is what gets installed into the build environment
+# before running packaging/build.bat, and everything here ends up inside the
+# installer. Installer size is a real conversion factor, so anything optional
+# lives in requirements-extra.txt instead.
+#
+#     pip install -r requirements.txt
+#
+# What was moved OUT of this file, and why:
+#   insightface + onnxruntime -> requirements-extra.txt (its pretrained weights
+#       are licensed for non-commercial use only, and it adds hundreds of MB;
+#       core/sface_backend.py provides an Apache-2.0 alternative that needs
+#       nothing beyond OpenCV)
+#   rembg                     -> requirements-extra.txt (large model runtime for
+#       one optional effect; there's a built-in fallback)
+#   openai + python-dotenv    -> requirements-extra.txt (cloud scene labelling is
+#       opt-in and has a local fallback)
 
-PyYAML>=6.0,<7.0
+# --- Configuration ---------------------------------------------------------- #
+PyYAML>=6.0,<7.0                     # utils/config.py
+
+# --- Imaging ---------------------------------------------------------------- #
 Pillow>=10.0,<13.0
-psd-tools>=1.16,<2.0
-ImageHash>=4.3,<5.0
-opencv-python-headless>=4.8,<5.0
 numpy>=1.24,<3.0
-mediapipe>=0.10,<1.0
-insightface>=0.7,<0.8
-onnxruntime>=1.16,<2.0
+opencv-python-headless>=4.8,<5.0     # blur/quality metrics, and the ONNX runtime
+                                     # behind the SFace/YuNet face recognition
+ImageHash>=4.3,<5.0                  # perceptual hashing (duplicate detection)
+
+# --- Face detection --------------------------------------------------------- #
+mediapipe>=0.10,<1.0                 # core feature, used by all three tools
+
+# --- Desktop UI ------------------------------------------------------------- #
 PyQt6>=6.5,<7.0
-openai>=1.30,<2.0
-python-dotenv>=1.0,<2.0
+
+# --- Album export ----------------------------------------------------------- #
+# Imported lazily (core/album/raster.py), only for layered PSD export, but kept
+# here because that is a shipped feature rather than an optional extra.
+psd-tools>=1.16,<2.0
+
+# --- Clustering ------------------------------------------------------------- #
+# Technically optional (core/person_cluster.py falls back to a greedy pass and
+# core/album/slot_matcher.py to a simpler match), but agglomerative clustering
+# measurably improves person grouping, which is a headline album feature.
+scipy>=1.10,<2.0

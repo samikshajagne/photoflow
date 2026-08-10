@@ -1,0 +1,40 @@
+# PhotoFlow — optional extras
+#
+#     pip install -r requirements-extra.txt
+#
+# None of these are needed to run PhotoFlow, and **none of them should be
+# installed in a release build environment**. Every feature they power has a
+# working fallback, and each one adds a lot of weight to the installer.
+#
+# Install them individually when you want that specific capability while
+# developing or evaluating.
+
+# --- Background removal ----------------------------------------------------- #
+# Higher-quality subject cut-outs for editorial album spreads (BiRefNet
+# weights are MIT-licensed, so commercially fine). Without it,
+# core/album/face_segmenter.py falls back to a head-and-shoulders ellipse, and
+# the collage maker's background whitening uses its colour-similarity mask --
+# which is actually the better choice for passport-style crops anyway.
+rembg>=2.0,<3.0
+onnxruntime>=1.16,<2.0               # required by rembg (and by insightface below)
+
+# --- Cloud scene labelling -------------------------------------------------- #
+# GPT-4o Vision for scene labels (core/vision_brain.py). Opt-in: without a key
+# the app uses local MediaPipe detection plus dominant-colour analysis.
+# Note the per-photo cost concern in docs/PRODUCT_IDEA_CATALOGUE.md §0.2 before
+# enabling this for large shoots.
+openai>=1.30,<2.0
+python-dotenv>=1.0,<2.0              # loads OPENAI_API_KEY from .env
+
+# --- InsightFace recognition backend ---------------------------------------- #
+# !!! LICENSING WARNING !!!
+# InsightFace's *code* is MIT, but its pretrained model packs (buffalo_l etc.)
+# are released for NON-COMMERCIAL RESEARCH USE ONLY. Do not ship a paid build
+# with these weights. See docs/PRODUCT_IDEA_CATALOGUE.md §0.1 -- InsightFace now
+# offer commercial licensing (recognition-oss-pack@insightface.ai), and
+# core/sface_backend.py is an Apache-2.0 alternative that needs nothing beyond
+# the OpenCV already in requirements.txt.
+#
+# Kept here only for accuracy benchmarking against SFace
+# (scripts/benchmark_embedders.py).
+insightface>=0.7,<0.8

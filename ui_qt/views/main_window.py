@@ -1,8 +1,27 @@
 """
 PhotoFlow main application window.
 
-Three-panel layout (sidebar | center | metadata) in a splitter, a toolbar
-(Open & Analyze / Re-analyze / Cancel / Refresh), and a status bar.
+Three mutually-exclusive modes, tracked in ``self._mode``:
+
+- ``"chooser"``: the startup landing page
+  (:class:`~ui_qt.views.mode_chooser_view.ModeChooserView`) filling the whole
+  window as its central widget, no toolbar. This is what ``ui_qt.main``
+  actually launches with (``MainWindow(mode="chooser")``) -- picking a card
+  calls :meth:`_enter_mode` to rebuild the *same* window in place, so the
+  chooser is part of the app's own UI rather than a separate popup dialog.
+- ``"album"`` (the constructor default, so plain ``MainWindow()`` -- e.g. in
+  tests -- still gets the full UI immediately): three-panel layout
+  (sidebar | center | metadata) in a splitter, the guided wizard bar, and the
+  Open & Analyze / Re-analyze / Cancel / Refresh / Generate Album / ... toolbar.
+- ``"passport"``: just the standalone Passport Photos tool
+  (:class:`~ui_qt.views.passport_photo_view.PassportPhotoView`) filling the
+  window, with no album toolbar, wizard, sidebar, or metadata panel.
+- ``"collage"``: just the standalone Collage Maker
+  (:class:`~ui_qt.views.collage_view.CollageView`), likewise filling the
+  window with none of the album chrome.
+
+Each mode only builds the widgets/actions it needs, so e.g. a "passport"
+window never references album-only state and vice versa.
 
 - Open & Analyze scans the chosen folder (reusing
   ``core.scanner.ImageScanner``), shows the thumbnail grid, and then flows
@@ -45,12 +64,16 @@ from core.organizer import (
     FOLDER_DUPLICATES,
     FOLDER_REVIEW,
 )
+from core.album.pacing import PACING_EDITORIAL
 from core.scanner import ImageScanner, ScanError
 from utils.config import ConfigError, load_config
 from utils.logger import get_logger
 from ui_qt.models.photo_index import PhotoEntry, PhotoIndex
 from ui_qt.views.center_view import CenterView
 from ui_qt.views.metadata_panel import MetadataPanel
+from ui_qt.views.mode_chooser_view import ModeChooserView
+from ui_qt.views.collage_view import CollageView
+from ui_qt.views.passport_photo_view import PassportPhotoView
 from ui_qt.views.preview_view import PreviewView
 from ui_qt.views.sidebar import CategorySidebar
 from ui_qt.views.wizard_bar import WizardBar
@@ -64,9 +87,10 @@ logger = get_logger("ui_qt.main_window")
 class MainWindow(QMainWindow):
     """Top-level window hosting the toolbar and three-panel layout."""
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None, mode: str = "album") -> None:
         super().__init__(parent)
-        self.setWindowTitle("PhotoFlow")
+        self._mode = mode  # "chooser" | "album" | "passport" -- see the module docstring
+        self._set_title_for_mode(mode)
         self.resize(1280, 800)
 
         self._folder: Optional[Path] = None
@@ -83,6 +107,8 @@ class MainWindow(QMainWindow):
         # Album settings chosen by the user (None until first Build Album).
         self._album_spec = None
         self._album_density = "balanced"
+        # Narrative rhythm: whether spread density varies or stays uniform.
+        self._album_pacing = PACING_EDITORIAL
         # Cover text (couple names + date) printed on the album cover.
         self._cover_title = ""
         self._cover_date = ""
@@ -120,22 +146,166 @@ class MainWindow(QMainWindow):
 
         self._build_toolbar()
         self._build_central()
-        self.statusBar().showMessage("Open a folder to begin.")
-        self._update_actions_enabled()
-        self._refresh_wizard()
+        self._show_initial_status()
+
+    _MODE_TITLES = {
+        "passport": "PhotoFlow - Passport Photos",
+        "collage": "PhotoFlow - Collage Maker",
+    }
+
+    def _set_title_for_mode(self, mode: str) -> None:
+        self.setWindowTitle(self._MODE_TITLES.get(mode, "PhotoFlow"))
+
+    def _show_initial_status(self) -> None:
+        if self._mode == "album":
+            self.statusBar().showMessage("Open a folder to begin.")
+            self._update_actions_enabled()
+            self._refresh_wizard()
+        elif self._mode == "passport":
+            self.statusBar().showMessage("Choose a photo to begin.")
+        elif self._mode == "collage":
+            self.statusBar().showMessage("Add photos to start your collage.")
+        else:  # "chooser"
+            self.statusBar().showMessage("Choose how you'd like to use PhotoFlow.")
+
+    # ----------------------------------------------------------------- #
+    # Switching from the startup chooser into a real mode
+    # ----------------------------------------------------------------- #
+    def _on_back_to_menu(self) -> None:
+        """
+        Return to the tool menu, confirming first if work is in progress.
+
+        Switching tools throws away the current tool's state (the album's
+        analysis, a half-built collage), so anything long-running gets a
+        confirmation rather than silently discarding a studio's work.
+        """
+        busy = self._mode == "album" and (
+            self._analysis.is_running() or self._export_running()
+        )
+        if busy:
+            reply = QMessageBox.question(
+                self,
+                "Switch tools?",
+                "Work is still in progress. Going back will stop it.\n\n"
+                "Switch tools anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            if self._analysis.is_running():
+                self._analysis.cancel()
+        self._enter_mode("chooser")
+
+    def _clear_mode_state(self) -> None:
+        """
+        Drop references to the outgoing mode's widgets before rebuilding.
+
+        Qt deletes the old central widget and its children at the C++ level, so
+        attributes like ``self.passport`` would otherwise point at deleted
+        objects -- touching one raises "wrapped C/C++ object has been deleted".
+        Album state is reset too, so returning to a tool starts clean rather
+        than half-remembering the previous folder.
+        """
+        for attr in (
+            "chooser", "passport", "collage",
+            "sidebar", "center", "preview", "metadata", "center_stack", "wizard",
+        ):
+            if hasattr(self, attr):
+                delattr(self, attr)
+        # Album-only actions belong to the toolbar we just removed.
+        for attr in list(vars(self)):
+            if attr.startswith("action_"):
+                delattr(self, attr)
+
+        if self._mode == "album":
+            self._folder = None
+            self._result = None
+            self._index = None
+            self._analyzed = False
+            self._album_project = None
+            self._album_dir = None
+            self._album_entries = {}
+            self._people_prepared = False
+            self._wizard_step = "open"
+            self._wizard_done = set()
+
+    def _enter_mode(self, mode: str) -> None:
+        """
+        Rebuild this window in place for ``mode`` ("chooser", "album",
+        "passport" or "collage"). Called when the user picks a card on
+        :class:`~ui_qt.views.mode_chooser_view.ModeChooserView`, and when they
+        use the toolbar's "All Tools" action to come back, so switching tools
+        feels like navigating within the app rather than restarting it.
+        """
+        # Shut the album's background thumbnail machinery down before its
+        # widgets are destroyed (closeEvent does the same on exit).
+        if self._mode == "album" and hasattr(self, "center"):
+            try:
+                self.center.shutdown()
+            except Exception as exc:  # noqa: BLE001 - never block navigation
+                logger.debug("Center shutdown while switching modes: %s", exc)
+
+        self._clear_mode_state()
+        self._mode = mode
+        self._set_title_for_mode(mode)
+        # QMainWindow doesn't auto-remove toolbars when you add new ones (it
+        # allows several at once), so the chooser's lack-of-toolbar state and
+        # any toolbar from a previous mode must be cleared explicitly.
+        for tb in self.findChildren(QToolBar):
+            self.removeToolBar(tb)
+            # setParent(None) detaches it *now*; deleteLater() alone defers
+            # until the event loop next runs, so rapid mode switching would
+            # leave orphaned toolbars parented to the window in the meantime.
+            tb.setParent(None)
+            tb.deleteLater()
+        self._build_toolbar()
+        self._build_central()  # replaces the central widget; Qt deletes the old one
+        self._show_initial_status()
 
     # ----------------------------------------------------------------- #
     # Construction
     # ----------------------------------------------------------------- #
+    def _add_back_action(self, toolbar: QToolBar) -> None:
+        """
+        Add the "All Tools" action that returns to the startup chooser.
+
+        Every mode gets this: without it, picking a tool was a one-way trip and
+        the only way to switch was restarting the application.
+        """
+        self.action_back = toolbar.addAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack), "All Tools"
+        )
+        self.action_back.setToolTip("Back to the tool menu (Alt+Left)")
+        self.action_back.setShortcut("Alt+Left")
+        self.action_back.triggered.connect(self._on_back_to_menu)
+        toolbar.addSeparator()
+
     def _build_toolbar(self) -> None:
+        if self._mode == "chooser":
+            return  # the chooser is the menu; nothing to go back to
+
+        if self._mode != "album":
+            # The standalone tools have no album chrome, but they still need a
+            # way back to the menu, so they get a toolbar containing just that.
+            tool_bar = QToolBar("Navigation")
+            tool_bar.setMovable(False)
+            tool_bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            self.addToolBar(tool_bar)
+            self._add_back_action(tool_bar)
+            return
+
         toolbar = QToolBar("Main")
         toolbar.setMovable(False)
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(toolbar)
+        self._add_back_action(toolbar)
 
         style = self.style()
         self.action_open = toolbar.addAction(
-            style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon), "Open & Analyze"
+            # "&&" because Qt reads a single & in action text as a keyboard
+            # mnemonic, which rendered this as "Open  Analyze".
+            style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon), "Open && Analyze"
         )
         self.action_open.triggered.connect(self._on_open_folder)
 
@@ -197,6 +367,26 @@ class MainWindow(QMainWindow):
             "Configure your OpenAI API key for smart event classification"
         )
     def _build_central(self) -> None:
+        if self._mode == "chooser":
+            # Startup landing page: fills the whole window; picking a card
+            # rebuilds this same window via _enter_mode, not a popup dialog.
+            self.chooser = ModeChooserView()
+            self.chooser.modeChosen.connect(self._enter_mode)
+            self.setCentralWidget(self.chooser)
+            return
+
+        if self._mode == "passport":
+            # Standalone tool: it fills the whole window, no sidebar/metadata/
+            # wizard -- those only make sense for the album workflow.
+            self.passport = PassportPhotoView()
+            self.setCentralWidget(self.passport)
+            return
+
+        if self._mode == "collage":
+            self.collage = CollageView()
+            self.setCentralWidget(self.collage)
+            return
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         self.sidebar = CategorySidebar()
@@ -390,6 +580,7 @@ class MainWindow(QMainWindow):
             self,
             spec=self._album_spec,
             density=self._album_density,
+            pacing=self._album_pacing,
             cover_title=self._cover_title,
             cover_date=self._cover_date,
             target_pages=self._target_pages,
@@ -399,6 +590,7 @@ class MainWindow(QMainWindow):
             return
         self._album_spec = dialog.album_spec()
         self._album_density = dialog.selected_density()
+        self._album_pacing = dialog.selected_pacing()
         self._cover_title = dialog.cover_title()
         self._cover_date = dialog.cover_date()
         self._target_pages = dialog.target_pages()
@@ -417,6 +609,7 @@ class MainWindow(QMainWindow):
             str(self._folder),
             self._album_spec,
             self._album_density,
+            pacing=self._album_pacing,
             cover_title=self._cover_title,
             cover_date=self._cover_date,
             target_pages=self._target_pages,
@@ -581,6 +774,7 @@ class MainWindow(QMainWindow):
             self,
             spec=self._current_spec(),
             density=self._album_density,
+            pacing=self._album_pacing,
             cover_title=self._cover_title,
             cover_date=self._cover_date,
             target_pages=self._target_pages,
@@ -590,6 +784,7 @@ class MainWindow(QMainWindow):
             return
         self._album_spec = dialog.album_spec()
         self._album_density = dialog.selected_density()
+        self._album_pacing = dialog.selected_pacing()
         self._cover_title = dialog.cover_title()
         self._cover_date = dialog.cover_date()
         self._target_pages = dialog.target_pages()
@@ -610,7 +805,9 @@ class MainWindow(QMainWindow):
             from core.album.layout_select import LayoutSelector
 
             selector = LayoutSelector(
-                density=self._album_density, target_pages=self._target_pages or 0
+                density=self._album_density,
+                pacing=self._album_pacing,
+                target_pages=self._target_pages or 0,
             )
             project.spreads = selector.select(project, self._album_spec)
             meta = dict(getattr(project.meta, "album_spec", {}) or {})
@@ -860,6 +1057,8 @@ class MainWindow(QMainWindow):
         return self._export_worker is not None and self._export_worker.isRunning()
 
     def _update_actions_enabled(self) -> None:
+        if self._mode != "album":
+            return
         has_folder = self._folder is not None
         busy = self._analysis.is_running() or self._export_running()
         self.action_open.setEnabled(not busy)
@@ -887,5 +1086,6 @@ class MainWindow(QMainWindow):
         if self._preview_worker is not None and self._preview_worker.isRunning():
             self._preview_worker.cancel()
             self._preview_worker.wait()
-        self.center.shutdown()
+        if self._mode == "album":
+            self.center.shutdown()
         super().closeEvent(event)

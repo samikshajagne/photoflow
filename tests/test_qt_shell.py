@@ -91,7 +91,9 @@ def test_metadata_panel_placeholders_and_set(qapp):
 def test_main_window_has_toolbar_actions(qapp):
     win = MainWindow()
     labels = {win.action_open.text(), win.action_analyze.text(), win.action_refresh.text()}
-    assert labels == {"Open & Analyze", "Re-analyze", "Refresh"}
+    # "Open && Analyze": a single & would be swallowed by Qt as a keyboard
+    # mnemonic and displayed as "Open  Analyze".
+    assert labels == {"Open && Analyze", "Re-analyze", "Refresh"}
     # Re-analyze/Refresh disabled until a folder is loaded.
     assert win.action_analyze.isEnabled() is False
     assert win.action_refresh.isEnabled() is False

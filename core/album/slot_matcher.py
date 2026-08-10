@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from core.album.facecrop import face_crop_loss
 from core.content_analyzer import (
     DETAIL,
     GROUP,
@@ -32,6 +33,19 @@ _W_COMPOSITION = 55.0
 _W_FACE_COUNT = 25.0
 _W_ASPECT = 20.0
 _VARIETY_BONUS = 20.0
+
+# Penalty applied to a slot that would crop through the photo's faces, scaled by
+# the fraction of face area lost. Set above 120 -- the most every positive
+# sub-score can contribute at once -- so a slot that would destroy the faces
+# entirely is disqualifying however well everything else matches. The other
+# sub-scores are generic labels about what a slot is *for*; face loss is a
+# measurement of what this slot would do to *this* photo, and the specific
+# measurement should outrank the generic label.
+#
+# For scale: losing one guest out of five from a group shot scores about 0.2, so
+# it costs 30 points -- enough to lose a close contest, not enough to override a
+# strong match on its own. Two guests lost costs 60, which does override one.
+_W_FACE_SAFETY = 150.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -73,7 +87,15 @@ def compatibility_score(
 
     Combines a composition match, a face-count match, an aspect-ratio fit, and a
     small bonus when this photo's type differs from the recently placed ones (to
-    keep a spread visually varied).
+    keep a spread visually varied). A **face-safety penalty** is then subtracted
+    for slots whose shape would crop through the photo's faces, which can drive
+    the score negative for a genuinely bad pairing.
+
+    The penalty covers a case the other sub-scores cannot see. ``_aspect_match``
+    compares *shapes*, so a wide group photo and a wide slot look like a good
+    pairing — but if the guests span the full width and the slot is only slightly
+    less wide, the cover crop still trims the people at each end. Only the face
+    boxes' actual extent reveals that, which is why it is scored separately.
     """
     composition = _composition_match(content, slot)
     face = _face_count_match(content, slot)
@@ -85,6 +107,7 @@ def compatibility_score(
     )
     if recent_types and content.composition_type not in recent_types:
         score += _VARIETY_BONUS
+    score -= _W_FACE_SAFETY * _face_safety_loss(content, slot)
     return score
 
 
@@ -133,6 +156,19 @@ def _face_count_match(content: PhotoContent, slot: SlotProfile) -> float:
     # Linear falloff outside the band.
     dist = (lo - n) if n < lo else (n - hi)
     return max(0.0, 1.0 - dist / 4.0)
+
+
+def _face_safety_loss(content: PhotoContent, slot: SlotProfile) -> float:
+    """
+    Fraction of face area this slot's shape would crop away (0.0 = all safe).
+
+    Returns 0.0 when the photo carries no face boxes, so descriptions built
+    before :attr:`PhotoContent.face_boxes` existed — or photos with no detected
+    faces — score exactly as they did before.
+    """
+    if not content.face_boxes:
+        return 0.0
+    return face_crop_loss(content.aspect_ratio, slot.aspect_ratio, content.face_boxes)
 
 
 def _aspect_match(photo_ar: float, slot_ar: float) -> float:

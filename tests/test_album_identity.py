@@ -78,7 +78,11 @@ def _orch(face_detector=None, embedder=None, **kw):
     return AlbumOrchestrator(
         face_detector=face_detector or FakeDetector(),
         embedder=embedder or FakeEmbedder(),
-        clusterer=PersonClusterer(distance_max=0.3),
+        # min_cluster_size=1: this tiny fixture has people (e.g. mom) in a single
+        # photo; the identity/labelling workflow under test wants them kept, not
+        # filtered as noise (the default min_cluster_size=2 is covered in
+        # tests/test_person_cluster.py).
+        clusterer=PersonClusterer(distance_max=0.3, min_cluster_size=1),
         **kw,
     )
 

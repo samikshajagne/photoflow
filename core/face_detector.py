@@ -50,6 +50,7 @@ import cv2
 import numpy as np
 
 from utils.logger import get_logger
+from utils.paths import resource_path
 
 if TYPE_CHECKING:
     from utils.config import AppConfig
@@ -90,7 +91,9 @@ DEFAULT_MAX_ANALYSIS_EDGE_PX: int = 1920
 # very-closeup detection (negligible for wedding photos).
 _MODEL_FILENAME = "blaze_face_full_range.tflite"
 _MODEL_ENV_VAR = "PHOTOFLOW_FACE_MODEL"
-_BUNDLED_MODEL = Path(__file__).resolve().parent.parent / "data" / "models" / _MODEL_FILENAME
+# Read-only: resolved via utils.paths so it points inside the PyInstaller bundle
+# when frozen and at the project's data/ directory when running from source.
+_BUNDLED_MODEL = resource_path("data", "models", _MODEL_FILENAME)
 _MODEL_DOWNLOAD_URL = (
     "https://storage.googleapis.com/mediapipe-models/face_detector/"
     "blaze_face_full_range/float16/latest/blaze_face_full_range.tflite"

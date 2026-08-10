@@ -12,9 +12,24 @@ venv/
 logs/*.log
 logs/*.log.*
 data/cache.db
+data/collage_presets.json
 
-# API keys — never commit secrets
+# Build output (packaging/build.bat). Never commit installers or frozen builds:
+# they're hundreds of MB and git keeps every version forever. Publish them as
+# GitHub Release assets instead -- see docs/SHIPPING_PLAN.md.
+build/
+dist/
+packaging/output/
+packaging/version_info.txt
+
+# The installer the website links to is a release asset, not a repo file.
+website/downloads/*.exe
+
+# API keys and build secrets — never commit these.
+# This repo has a public remote, and anything committed once stays in git
+# history forever, so a later deletion does not undo the exposure.
 .env
+utils/_secrets.py
 
 # OS / editor cruft
 .DS_Store

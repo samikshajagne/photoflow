@@ -56,6 +56,10 @@ class PhotoContent:
         composition_type: One of :data:`COMPOSITION_TYPES`.
         orientation: ``"portrait"``, ``"landscape"`` or ``"square"``.
         aspect_ratio: width / height.
+        face_boxes: The relative ``(x, y, w, h)`` face rectangles this
+            description was derived from. Centroids say where faces *are*;
+            the boxes say how much room they need, which is what deciding
+            whether a slot's shape would crop through them requires.
     """
 
     face_count: int
@@ -64,6 +68,7 @@ class PhotoContent:
     composition_type: str
     orientation: str
     aspect_ratio: float
+    face_boxes: Tuple[RelRect, ...] = ()
 
 
 def orientation_of(aspect_ratio: float) -> str:
@@ -127,6 +132,7 @@ def analyze(aspect_ratio: float, face_boxes: Sequence[RelRect] = ()) -> PhotoCon
         composition_type=classify_composition(boxes, aspect_ratio),
         orientation=orientation_of(aspect_ratio),
         aspect_ratio=aspect_ratio,
+        face_boxes=boxes,
     )
 
 

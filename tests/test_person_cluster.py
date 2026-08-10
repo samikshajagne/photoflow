@@ -27,11 +27,19 @@ def test_empty_input_yields_no_clusters():
 
 
 def test_single_face_one_cluster_with_unit_centroid():
-    clusters = PersonClusterer().cluster([_face("/p/a.jpg", 0, [3.0, 4.0])])
+    # min_cluster_size=1 so the lone face isn't filtered as noise: this test is
+    # about centroid geometry, not the default noise filter (see below).
+    clusters = PersonClusterer(min_cluster_size=1).cluster([_face("/p/a.jpg", 0, [3.0, 4.0])])
     assert len(clusters) == 1
     assert clusters[0].size == 1
     # Centroid is L2-normalized: [3,4] -> [0.6, 0.8].
     assert np.allclose(clusters[0].centroid, [0.6, 0.8], atol=1e-5)
+
+
+def test_singleton_clusters_filtered_by_default():
+    # DEFAULT_MIN_CLUSTER_SIZE=2: a person seen in only one photo is treated as
+    # noise (background guest / mis-detection) and dropped.
+    assert PersonClusterer().cluster([_face("/p/a.jpg", 0, [3.0, 4.0])]) == []
 
 
 def test_same_direction_faces_merge():
@@ -50,7 +58,8 @@ def test_orthogonal_faces_split():
         _face("/p/a.jpg", 0, [1.0, 0.0, 0.0]),
         _face("/p/b.jpg", 0, [0.0, 1.0, 0.0]),  # cosine distance 1.0 > 0.4
     ]
-    clusters = PersonClusterer(distance_max=0.4).cluster(faces)
+    # min_cluster_size=1: this test checks the split, not the noise filter.
+    clusters = PersonClusterer(distance_max=0.4, min_cluster_size=1).cluster(faces)
     assert len(clusters) == 2
 
 

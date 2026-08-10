@@ -156,6 +156,56 @@ def face_safe_cover_crop(
     return (crop_x, crop_y, crop_w, crop_h)
 
 
+def _intersection_area(a: RelRect, b: RelRect) -> float:
+    """Area of the overlap between two relative rectangles (0.0 if disjoint)."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    w = min(ax + aw, bx + bw) - max(ax, bx)
+    h = min(ay + ah, by + bh) - max(ay, by)
+    return w * h if (w > 0 and h > 0) else 0.0
+
+
+def face_crop_loss(
+    photo_ar: float,
+    frame_ar: float,
+    face_boxes: Sequence[RelRect] = (),
+) -> float:
+    """
+    Fraction of face area a cover crop into ``frame_ar`` would slice away.
+
+    :func:`face_safe_cover_crop` already shifts the crop window as far as it can
+    to keep faces visible, but shifting cannot help when the faces are simply
+    spread wider than the slot's shape can hold — a row of eight guests will not
+    survive a narrow vertical slot no matter where the window sits. This function
+    measures that unavoidable damage, so the layout engine can hand such a photo
+    to a slot shaped to hold it instead of discovering the problem after cropping.
+
+    Measured against the **raw** face boxes rather than the padded
+    head-and-shoulders regions: losing some shoulder is a cosmetic compromise,
+    whereas cutting a face is the defect worth avoiding.
+
+    Args:
+        photo_ar: Source photo aspect ratio (width / height).
+        frame_ar: Target slot aspect ratio (width / height).
+        face_boxes: Relative face rectangles over the source (unpadded).
+
+    Returns:
+        ``0.0`` when every face survives intact (including when there are no
+        faces), rising to ``1.0`` if the crop would miss them entirely.
+    """
+    boxes = tuple(face_boxes)
+    if not boxes:
+        return 0.0
+
+    total = sum(w * h for _, _, w, h in boxes)
+    if total <= 0:
+        return 0.0
+
+    crop = face_safe_cover_crop(photo_ar, frame_ar, boxes)
+    kept = sum(_intersection_area(box, crop) for box in boxes)
+    return min(max(1.0 - kept / total, 0.0), 1.0)
+
+
 # --------------------------------------------------------------------------- #
 # Landmark-based face box (Implementation Plan — Component 4)
 # --------------------------------------------------------------------------- #

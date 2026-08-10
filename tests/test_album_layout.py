@@ -11,6 +11,8 @@ This module tests album layout geometry only.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from core.album.layout import (
@@ -168,9 +170,23 @@ def test_layout_chunks_into_expected_spreads():
         assert s.index == idx
         assert s.width_px == spec.spread_width_px
         assert s.height_px == spec.spread_height_px
-    # One placement per item, paths preserved in order.
+    # Every photo placed exactly once -- nothing lost or duplicated.
     flat = [p.path for s in spreads for p in s.placements]
-    assert flat == [it.path for it in items]
+    assert sorted(flat) == sorted(it.path for it in items)
+    assert len(flat) == len(set(flat))
+
+    # Chronology is preserved at the *spread* level: spread k holds the k-th
+    # chunk of the input. Within a spread, order may differ -- the engine
+    # deliberately pairs photos to frames by aspect ratio
+    # (AlbumLayoutEngine._assign_by_orientation: "portrait photos to tall
+    # frames, landscape to wide ones"), so asserting a globally-unchanged
+    # order would be asserting that feature is broken.
+    expected_chunks = [
+        {it.path for it in items[0:4]},
+        {it.path for it in items[4:8]},
+        {it.path for it in items[8:10]},
+    ]
+    assert [{p.path for p in s.placements} for s in spreads] == expected_chunks
 
 
 def test_layout_per_spread_capped_at_max():
@@ -388,9 +404,37 @@ def test_choose_template_prefers_tall_frames_for_portraits():
 
 
 def test_choose_template_prefers_wide_frames_for_landscapes():
+    """
+    Template selection should favour wide frames for landscape photos.
+
+    Note it cannot make *every* frame wide: on a square-page spread the
+    best-fitting 3-frame arrangement for three 1.9 landscapes is
+    ``[0.98, 2.0, 2.0]``, whose summed log-aspect mismatch (0.765) beats every
+    all-wide alternative -- e.g. ``[2, 2, 4]`` scores 0.847 and three stacked
+    full-width rows ``[6, 6, 6]`` scores 3.45. So the meaningful assertions are
+    that frames skew wide and that selection genuinely responds to photo
+    aspect, not that every frame is individually > 1.0.
+    """
     spec = AlbumSpec(page_width_in=12, page_height_in=12, dpi=300)
-    frames = choose_template([1.9, 1.9, 1.9], spec)
-    assert all(_aspect(f, spec) > 1.0 for f in frames)
+    landscapes = [1.9, 1.9, 1.9]
+    portraits = [0.6, 0.6, 0.6]
+
+    frames = choose_template(landscapes, spec)
+    aspects = [_aspect(f, spec) for f in frames]
+
+    # Skews wide: most frames wide, and wide on average.
+    assert sum(1 for a in aspects if a > 1.0) >= 2
+    assert sum(aspects) / len(aspects) > 1.0
+
+    # Responds to aspect: the template picked for landscapes fits landscapes
+    # better than the one picked for portraits does.
+    def _mismatch(frs, photos):
+        fr = sorted(_aspect(f, spec) for f in frs)
+        return sum(abs(math.log(a / b)) for a, b in zip(fr, sorted(photos)))
+
+    assert _mismatch(frames, landscapes) < _mismatch(
+        choose_template(portraits, spec), landscapes
+    )
 
 
 def test_choose_template_avoids_gutter_when_requested():

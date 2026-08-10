@@ -18,6 +18,7 @@ from typing import Iterable, Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from core.album.pacing import PACING_EDITORIAL
 from utils.logger import get_logger
 
 logger = get_logger("ui_qt.album_workers")
@@ -40,11 +41,13 @@ class GenerateWorker(QThread):
         target_pages: int = 0,
         layout_options: Optional[dict] = None,
         parent: Optional[object] = None,
+        pacing: str = PACING_EDITORIAL,
     ) -> None:
         super().__init__(parent)
         self._folder = str(folder)
         self._album_spec = album_spec
         self._density = density
+        self._pacing = pacing
         self._cover_title = cover_title
         self._cover_date = cover_date
         self._target_pages = int(target_pages or 0)
@@ -57,7 +60,9 @@ class GenerateWorker(QThread):
 
             kwargs: dict = {
                 "layout_selector": LayoutSelector(
-                    density=self._density, target_pages=self._target_pages
+                    density=self._density,
+                    pacing=self._pacing,
+                    target_pages=self._target_pages,
                 ),
                 "cover_title": self._cover_title,
                 "cover_date": self._cover_date,

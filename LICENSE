@@ -1,0 +1,143 @@
+PhotoFlow — End User Licence Agreement
+Samiksha Technologies
+
+Version 1.0 — 5 August 2026
+
+IMPORTANT: This is a draft prepared for the beta release. Have it reviewed by a
+lawyer qualified in Indian law before you charge money for this software. It is
+written to be clear and fair rather than exhaustive, and it is not legal advice.
+
+--------------------------------------------------------------------------------
+1. AGREEMENT
+--------------------------------------------------------------------------------
+This agreement is between you (either an individual or the organisation you
+represent) and Samiksha Technologies ("we", "us"). By installing or using
+PhotoFlow ("the Software") you accept these terms. If you do not accept them,
+do not install or use the Software.
+
+--------------------------------------------------------------------------------
+2. LICENCE GRANTED
+--------------------------------------------------------------------------------
+We grant you a non-exclusive, non-transferable licence to install and use the
+Software as follows.
+
+2.1  Trial. You may evaluate the Software free of charge for the trial period
+     shown in the application. No payment or licence key is required during the
+     trial.
+
+2.2  Beta. While the Software is marked as a beta release it is provided free of
+     charge. We may change or end the beta at any time, with reasonable notice.
+
+2.3  Licensed use. Once you hold a valid licence key, you may install and use the
+     Software on the number of computers your licence permits. Unless stated
+     otherwise, one licence covers two computers used by the same person.
+
+2.4  Your work is yours. Every photograph, album, print sheet, collage and other
+     output you create with the Software belongs entirely to you. We claim no
+     rights over it and there are no restrictions on its commercial use.
+
+--------------------------------------------------------------------------------
+3. WHAT YOU MAY NOT DO
+--------------------------------------------------------------------------------
+You may not:
+
+  (a) share, resell, rent or sublicense the Software or your licence key;
+  (b) use one licence key on more computers than it permits;
+  (c) attempt to remove or bypass the licensing, trial or activation mechanisms;
+  (d) decompile or reverse-engineer the Software, except where law expressly
+      permits it despite a term such as this;
+  (e) remove or alter any copyright or ownership notices.
+
+--------------------------------------------------------------------------------
+4. YOUR PHOTOGRAPHS AND YOUR PRIVACY
+--------------------------------------------------------------------------------
+4.1  The Software processes your photographs on your own computer. We do not
+     receive, upload, store or have any access to them.
+
+4.2  Licensing. When you activate a licence key, the Software sends us the key
+     and an anonymous identifier derived from your computer's hardware, so we can
+     confirm the licence and count installations. It contains nothing that
+     identifies you or your clients.
+
+4.3  Optional usage statistics. If, and only if, you choose to enable it, the
+     Software may send counts of how often each tool is used, along with the
+     application version and your operating system version. It never includes
+     photographs, file names, folder names, client details or anything you have
+     typed. You can see exactly what would be sent from within the application,
+     and you may turn it off at any time, which also deletes what was collected.
+
+4.4  Your rights. You may ask us what data we hold about you, ask us to correct
+     or delete it, or withdraw your consent to usage statistics. Write to the
+     address in section 10.
+
+--------------------------------------------------------------------------------
+5. OWNERSHIP
+--------------------------------------------------------------------------------
+The Software is licensed, not sold. Samiksha Technologies retains all
+intellectual property rights in it. This agreement gives you no rights to our
+trade marks or branding.
+
+--------------------------------------------------------------------------------
+6. THIRD-PARTY COMPONENTS
+--------------------------------------------------------------------------------
+The Software includes open-source components, each under its own licence,
+including but not limited to: Python, Qt (PyQt6), OpenCV, NumPy, Pillow,
+MediaPipe, SciPy and psd-tools. Those licences continue to apply to those
+components, and where they grant you rights that this agreement would otherwise
+restrict, their terms prevail for that component. A full list of components and
+licences is available on request.
+
+--------------------------------------------------------------------------------
+7. NO WARRANTY
+--------------------------------------------------------------------------------
+The Software is provided "as is", without warranty of any kind, express or
+implied, including any warranty of merchantability, fitness for a particular
+purpose, or non-infringement.
+
+You are responsible for keeping backups of your photographs. The Software is
+designed never to modify or delete your original files, but no software is free
+of defects and no backup strategy should depend on that.
+
+Automated results — including photograph selection, quality scoring, face
+detection, person grouping, cropping and layout — are suggestions produced by
+software and will not always be correct. Review the output before delivering it
+to a client.
+
+The Software helps you produce photographs at sizes you specify. It does not
+certify that any photograph will be accepted for a passport, visa, identity
+document or any other purpose. Confirm the current official requirements
+yourself.
+
+--------------------------------------------------------------------------------
+8. LIMITATION OF LIABILITY
+--------------------------------------------------------------------------------
+To the maximum extent permitted by law, we are not liable for any indirect,
+incidental, special or consequential loss, or for lost profits, lost business or
+lost or corrupted data, arising from your use of or inability to use the
+Software.
+
+Our total liability under this agreement will not exceed the amount you paid us
+for the Software in the twelve months before the claim arose, or ₹1,000 if you
+paid nothing.
+
+Nothing in this agreement excludes liability that cannot lawfully be excluded.
+
+--------------------------------------------------------------------------------
+9. TERM AND TERMINATION
+--------------------------------------------------------------------------------
+This agreement applies for as long as you use the Software. It ends
+automatically if you materially breach it, in which case you must stop using the
+Software and remove it from your computers. You may end it at any time by
+uninstalling the Software. Sections 4, 5, 7 and 8 survive termination.
+
+--------------------------------------------------------------------------------
+10. GOVERNING LAW AND CONTACT
+--------------------------------------------------------------------------------
+This agreement is governed by the laws of India, and the courts of India have
+exclusive jurisdiction over any dispute arising from it.
+
+    Samiksha Technologies
+    hello@samikshatech.com
+
+--------------------------------------------------------------------------------
+Copyright (c) 2026 Samiksha Technologies. All rights reserved.

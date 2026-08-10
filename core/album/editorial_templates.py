@@ -38,10 +38,17 @@ _BG = Background(type="sampled", lighten=0.55)
 
 
 def _photo(rect, *, hero: bool = False) -> TemplateSlot:
-    """An editorial photo slot: full-bleed hero (no border) or bordered inset."""
+    """
+    An editorial photo slot: full-bleed hero (no border) or bordered inset.
+
+    The hero is marked ``use_cutout=True`` so that *if* the album enables cutouts
+    (Album Settings → "Cut-out hero photos"), the hero becomes a subject cutout on
+    the themed background — the reference "person on colour" look. With cutouts
+    off (default) it renders as a normal full-bleed photo.
+    """
     if hero:
         return TemplateSlot(rect=rect, shape=SHAPE_ROUNDED, corner_radius=0.0,
-                            border=0.0, shadow=False)
+                            border=0.0, shadow=False, use_cutout=True)
     return TemplateSlot(rect=rect, shape=SHAPE_ROUNDED, corner_radius=_RADIUS,
                         border=_BORDER, border_color=_WHITE, shadow=True)
 

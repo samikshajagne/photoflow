@@ -1,9 +1,9 @@
 """
 Offscreen tests for the Album Settings dialog.
 
-Verifies the dialog reports the chosen AlbumSpec and density, that presets
-drive the width/height, and that Custom enables manual sizing. Skipped where
-PyQt6 can't load.
+Verifies the dialog reports the chosen AlbumSpec, density and pacing, that
+presets drive the width/height, and that Custom enables manual sizing. Skipped
+where PyQt6 can't load.
 """
 
 import os
@@ -20,6 +20,11 @@ except ImportError as exc:  # pragma: no cover - no Qt
     pytest.skip(f"PyQt6 unavailable: {exc}", allow_module_level=True)
 
 from core.album.layout import AlbumSpec  # noqa: E402
+from core.album.pacing import (  # noqa: E402
+    PACING_EDITORIAL,
+    PACING_UNIFORM,
+    available_rhythms,
+)
 
 
 @pytest.fixture(scope="session")
@@ -64,3 +69,30 @@ def test_density_choices_round_trip(qapp):
     for density in ("spacious", "balanced", "dense"):
         dlg = AlbumSettingsDialog(density=density)
         assert dlg.selected_density() == density
+
+
+def test_pacing_defaults_to_editorial(qapp):
+    assert AlbumSettingsDialog().selected_pacing() == PACING_EDITORIAL
+
+
+def test_pacing_choices_round_trip(qapp):
+    for pacing in available_rhythms():
+        dlg = AlbumSettingsDialog(pacing=pacing)
+        assert dlg.selected_pacing() == pacing
+
+
+def test_every_offered_pacing_is_a_real_rhythm(qapp):
+    """
+    A label whose value the layout selector doesn't recognise would silently
+    fall back to uniform, so the dropdown would lie about what it does.
+    """
+    dlg = AlbumSettingsDialog()
+    offered = {dlg.pacing.itemData(i) for i in range(dlg.pacing.count())}
+    assert offered <= set(available_rhythms())
+
+
+def test_pacing_and_density_are_independent(qapp):
+    """They control different things and must not overwrite each other."""
+    dlg = AlbumSettingsDialog(density="dense", pacing=PACING_UNIFORM)
+    assert dlg.selected_density() == "dense"
+    assert dlg.selected_pacing() == PACING_UNIFORM

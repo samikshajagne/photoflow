@@ -1,177 +1,159 @@
+<div align="center">
+
 # PhotoFlow
 
-A local-first Windows desktop tool that triages wedding photo shoots
-(1,000–5,000 images) into `BestShots` / `Duplicates` / `Blurry` /
-`Review`, so photographers don't spend hours sorting manually.
+**Three studio jobs. One desktop app.**
 
-## Overview
+Album generation, passport/ID photo sheets and a collage maker — running entirely
+on your own computer.
 
-PhotoFlow scans a folder of photos, automatically detects duplicates and blurry images, calculates quality scores, detects faces, and organizes the images into categorized directories under a parent output folder (`PhotoFlow_Output`). 
+*by [Samiksha Technologies](https://samikshatech.com)*
+
+</div>
 
 ---
 
-## Project structure
+PhotoFlow is a local-first Windows desktop application for photo studios. It sorts
+a whole wedding shoot, builds print-ready album spreads, produces passport and ID
+photo sheets, and makes collages — without uploading a single photograph to
+anyone's servers.
+
+Free while in beta.
+
+## The three tools
+
+PhotoFlow opens by asking what you're doing today, and shows only the controls for
+that job.
+
+**Generate Album** — point it at a shoot. It scores every frame for sharpness and
+exposure (measuring sharpness on the face when there is one, so a sharp subject
+against a soft background isn't wrongly rejected), groups duplicates and bursts,
+detects and clusters faces by person, then lays out print-ready spreads with
+selectable themes and density.
+
+**Passport & ID Photos** — face-aware automatic cropping to standard or custom
+sizes, tiled print sheets with cutting-guide borders, **two or three different
+people on one sheet** each with their own crop and copy count, and optional face
+enhancement (skin smoothing, colour correction, background cleanup, teeth/eye
+brightening) with hold-to-compare against the original.
+
+**Collage Maker** — seven layouts including an aspect-following mosaic and
+Pinterest-style masonry, six themes, shape collages (heart, star, or any number or
+initials), gradient/image/blurred-photo backgrounds, titles and studio watermark,
+per-photo filters, automatic best-photo selection from a folder, and print-safety
+warnings when a photo is too low-resolution for the chosen output size.
+
+## Design principles
+
+- **Faces are never cut.** Every automatic crop checks where the faces are before
+  deciding what to discard.
+- **Runs locally.** Client photos stay on the studio's machine. It keeps working
+  without an internet connection.
+- **Nothing metered.** No per-photo charges, whatever the size of the shoot.
+- **Automatic, never locked.** Every automated decision can be overridden.
+- **Read bundled files, write user files.** Anything the app saves goes to the
+  per-user data directory via `utils/paths.py` — never beside the application,
+  which is read-only once installed.
+
+## Running from source
+
+Requires Python 3.10+.
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows;  source .venv/bin/activate elsewhere
+pip install -r requirements-dev.txt
+python -m ui_qt.main            # desktop application
+python main.py PHOTO_FOLDER     # CLI: sort a folder only
+```
+
+### Dependencies are split three ways
+
+| File | Contents |
+| --- | --- |
+| `requirements.txt` | Everything the app needs. This is what a release build installs. |
+| `requirements-extra.txt` | Optional features, each with a working fallback. **Not for release builds.** |
+| `requirements-dev.txt` | Runtime + pytest, ruff, mypy, PyInstaller. |
+
+The extras are deliberately excluded from release builds: they add hundreds of
+megabytes, and **InsightFace's pretrained weights are licensed for non-commercial
+use only** (`core/sface_backend.py` is an Apache-2.0 alternative). The test suite
+passes without them, which is how we know a release build works.
+
+## Building the installer
+
+Windows only — PyInstaller cannot cross-compile.
+
+```bat
+packaging\build.bat
+```
+
+That runs preflight checks, the test suite, PyInstaller and Inno Setup, and stops
+at the first failure. Output: `packaging\output\PhotoFlow-Setup-<version>.exe`.
+
+Run the checks alone at any time:
+
+```bash
+python packaging/preflight.py
+```
+
+Preflight verifies in about a second that every bundled data file exists, every
+lazily-imported module is declared, the version resource matches
+`utils/version.py`, no module writes to a path derived from `__file__`, and the
+entry point imports — the mistakes that otherwise only surface after a full build
+or on a customer's machine.
+
+Full detail: [`packaging/BUILD.md`](packaging/BUILD.md).
+
+## Tests
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m pytest tests -q
+```
+
+1,300+ tests, all passing. Qt tests run offscreen and self-skip if PyQt6 is
+unavailable. CI runs the suite on Python 3.10–3.12, plus preflight and the website
+link checks, on every push.
+
+## Project layout
 
 ```
 photoflow/
-├── main.py                     # CLI entry point — scan + organize a photo folder
-├── core/
-│   ├── pipeline.py             # End-to-end orchestration (scan→dup→blur→face→quality→organize)
-│   ├── scanner.py              # Walks a folder and enumerates supported image files
-│   ├── duplicate_detector.py   # Perceptual-hash duplicate detection
-│   ├── blur_detector.py        # Variance-of-Laplacian blur scoring
-│   ├── face_detector.py        # MediaPipe face detection (Solutions + Tasks API fallback)
-│   ├── quality_scorer.py       # 0-100 quality score (sharpness, exposure, faces)
-│   ├── organizer.py            # Copies photos into BestShots/Duplicates/Blurry/Review
-│   ├── auto_edit.py            # Auto tone/colour corrections
-│   ├── identity.py             # Per-person identity tracking across a shoot
-│   ├── face_embedder.py        # Face embedding via InsightFace
-│   ├── person_cluster.py       # Clusters embeddings into person identities
-│   ├── timeline.py             # Shoot timeline segmentation
-│   └── album/                  # Album layout and export pipeline
-├── ui_qt/
-│   ├── main.py                 # Desktop UI entry point (PyQt6)
-│   ├── views/                  # Qt view modules (main window, gallery, etc.)
-│   ├── workers/                # Background Qt worker threads
-│   ├── models/                 # Qt data models
-│   └── theme.py                # Dark theme applied to the Qt app
-├── tools/
-│   └── diagnose.py             # Diagnostic runner — full DEBUG log + env/model checks
-├── utils/
-│   ├── config.py               # Loads, merges, and validates configuration
-│   └── logger.py               # Rotating-file + console logging setup
-├── data/
-│   ├── default_config.yaml     # Shipped default configuration values
-│   └── models/                 # Optional bundled model files (e.g. blaze_face_short_range.tflite)
-├── tests/                      # pytest unit tests
-├── logs/                       # Runtime log output (gitignored except .gitkeep)
-├── requirements.txt            # Runtime dependencies
-├── requirements-dev.txt        # + pytest, for running the test suite
-├── pytest.ini                  # Points pytest at the tests/ directory
-└── .gitignore
+├── core/                  Image processing and business logic (no UI imports)
+│   ├── pipeline.py            scan → duplicates → blur → faces → quality → organize
+│   ├── collage*.py            collage layouts, shapes, text, auto-build, presets
+│   ├── passport_photo.py      ID photo crops and print sheets
+│   ├── face_beautify.py       skin/colour/background/teeth enhancement
+│   ├── licensing.py           trial, activation, offline grace period
+│   ├── telemetry.py           opt-in aggregate usage counts
+│   ├── diagnostics.py         support report (redacts photo paths and usernames)
+│   └── album/                 album layout, templates, themes, rasterising, export
+├── ui_qt/                 PyQt6 desktop UI (views, workers, theme)
+├── utils/                 config, logging, paths, version
+├── persistence/           analysis cache and identity store
+├── packaging/             PyInstaller spec, Inno Setup script, build + preflight
+├── website/               static marketing/download site (see website/README.md)
+├── scripts/, tools/       developer utilities (never shipped)
+├── data/                  bundled models, fonts, templates, default config
+├── docs/                  plans and testing notes
+└── tests/                 the test suite
 ```
 
----
+## Documentation
 
-## Running the Application
+| Document | What it covers |
+| --- | --- |
+| [`docs/SHIPPING_PLAN.md`](docs/SHIPPING_PLAN.md) | End-to-end distribution: hosting, updates, payment, costs |
+| [`docs/PRODUCT_IDEA_CATALOGUE.md`](docs/PRODUCT_IDEA_CATALOGUE.md) | Feature ideas, competitive landscape, licensing blockers |
+| [`docs/OWNER_DASHBOARD_PLAN.md`](docs/OWNER_DASHBOARD_PLAN.md) | Customer monitoring, what to track and what not to |
+| [`packaging/BUILD.md`](packaging/BUILD.md) | Building and signing the installer |
+| [`website/README.md`](website/README.md) | Deploying the site |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Code conventions |
 
-### Option 1: Desktop UI (Recommended)
-To launch the desktop application, run:
-```bash
-python -m ui_qt.main
-```
-or:
-```bash
-python ui_qt/main.py
-```
-This starts the PhotoFlow PyQt6 desktop application, providing an intuitive interface for folder selection, scanning, and reviewing photos.
+## Licence
 
-### Option 2: Command-Line Interface (CLI)
-You can also run the pipeline directly from the command line over a folder of photos.
+Proprietary. See [`LICENSE`](LICENSE) — an end-user licence agreement, not an
+open-source licence. The application bundles open-source components (Qt, OpenCV,
+NumPy, Pillow, MediaPipe, SciPy, psd-tools) under their own terms.
 
-**Usage:**
-```bash
-python main.py PHOTO_FOLDER [--output DIR] [--dry-run] [--config PATH]
-```
-
-**Examples:**
-- Preview what would happen without copying any files (Dry Run):
-  ```bash
-  python main.py "C:/Users/me/Pictures/Trip" --dry-run
-  ```
-- Scan and organize copies of photos into `<PHOTO_FOLDER>/PhotoFlow_Output`:
-  ```bash
-  python main.py "C:/Users/me/Pictures/Trip"
-  ```
-- Organize photos into a different destination using a custom configuration override:
-  ```bash
-  python main.py ./photos --output ./sorted --config ./my_config.yaml
-  ```
-
----
-
-## Debugging — Diagnostic Runner
-
-`tools/diagnose.py` runs the album pipeline on a folder with **full DEBUG logging** captured to a single file (`logs/photoflow_debug.log`), overwriting it on each run so you always get one clean, shareable capture.
-
-### What it captures
-
-| Section | What you learn |
-|---|---|
-| **Environment** | Python version, OS, and whether `cv2 / mediapipe / insightface / onnxruntime / PyQt6` import, plus whether the MediaPipe face model and InsightFace `buffalo_l` are present on disk |
-| **Full DEBUG trace** | Every stage: scan → duplicates → blur → faces → quality → identity → story → layout → export, including per-photo "no faces" debug lines explaining why face counts come back 0 |
-| **Category distribution** | How many photos landed in each output folder |
-| **Face-count distribution** | How many photos had 0 / 1 / 2 / … detected faces (or `unknown`) |
-| **Sections & spreads** | Section names + photo counts, total spread count, manifest path |
-| **SUCCESS / FAILED marker** | A clear final line; on failure the full traceback is included |
-
-### Usage
-
-**Debug an album run** (paste `logs/photoflow_debug.log` when reporting issues):
-```powershell
-python tools\diagnose.py "D:\path\to\your\photos"
-```
-
-**Environment-only check** (no photos needed — verifies all backends are installed):
-```powershell
-python tools\diagnose.py
-```
-
-**Capture a pytest run alongside:**
-```powershell
-python -m pytest -q > logs\pytest.log 2>&1
-```
-
-> **Tip:** The log file is always overwritten on each run — you'll never get mixed output from different sessions.
-
----
-
-## Test instructions
-
-1. Install the dev dependencies (includes `pytest` on top of the base
-   requirements):
-
-   ```bash
-   pip install -r requirements-dev.txt
-   ```
-
-2. Run the full test suite from the `photoflow/` directory:
-
-   ```bash
-   pytest
-   ```
-
-   For more detail on each test:
-
-   ```bash
-   pytest -v
-   ```
-
-3. Expected result: all tests pass. Tests use `tmp_path` fixtures for any
-   file I/O, so they never write into the real `logs/` directory or
-   touch `data/default_config.yaml`.
-
----
-
-## Setup
-
-**Requirements:** Python 3.10 or newer, Windows/macOS/Linux.
-
-1. Create and activate a virtual environment:
-
-   **Windows (PowerShell):**
-   ```powershell
-   python -m venv .venv
-   .venv\Scripts\Activate.ps1
-   ```
-
-   **macOS/Linux:**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-
-2. Install runtime dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+Support: `hello@samikshatech.com`

@@ -72,7 +72,11 @@ def test_build_face_refs_skips_embedding_failures():
 
 def test_person_index_build_and_queries():
     embedder, face_inputs = _scene()
-    index = PersonIndex.build(face_inputs, embedder, PersonClusterer(distance_max=0.3))
+    # min_cluster_size=1 so the once-seen guest still forms a cluster: this test
+    # is about labelling/queries, not the default noise filter.
+    index = PersonIndex.build(
+        face_inputs, embedder, PersonClusterer(distance_max=0.3, min_cluster_size=1)
+    )
 
     # Three people: bride, groom, guest.
     assert len(index.clusters) == 3

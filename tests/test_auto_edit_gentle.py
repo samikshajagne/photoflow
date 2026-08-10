@@ -23,12 +23,38 @@ def test_strength_zero_is_identity(tmp_path):
 
 
 def test_wellexposed_neutral_is_near_identity(tmp_path):
+    """
+    A genuinely neutral, normal-contrast frame should be left alone.
+
+    The noise is generated once in *grayscale* and replicated across R/G/B
+    rather than drawn independently per channel. That matters: contrast is
+    measured on luma, and luma is a weighted sum of the three channels, so
+    independent per-channel noise partially cancels -- std 0.215 per channel
+    comes out as luma std 0.143, well under the 0.22 reference the engine
+    normalizes toward. The engine would then (correctly) boost contrast to
+    its cap, and this test would fail while testing nothing it claimed to.
+    Replicating one channel keeps luma std at ~0.215, i.e. actually normal
+    contrast. Saved as PNG so lossy compression can't reshape the noise
+    either.
+    """
     rng = np.random.default_rng(0)
-    neutral = np.clip(rng.normal(128, 56, (200, 200, 3)), 0, 255).astype(np.uint8)
-    r = AutoEditor().analyze(_save(tmp_path, "n.jpg", neutral))
+    gray = np.clip(rng.normal(128, 56, (200, 200)), 0, 255).astype(np.uint8)
+    neutral = np.dstack([gray, gray, gray])
+    r = AutoEditor().analyze(_save(tmp_path, "n.png", neutral))
     assert abs(r.exposure - 1.0) < 0.08
     assert all(abs(g - 1.0) < 0.1 for g in r.white_balance_gains)
     assert abs(r.contrast - 1.0) < 0.12
+
+
+def test_genuinely_flat_image_still_gets_a_contrast_boost(tmp_path):
+    """Guards the flip side of the test above: the gentle engine should still
+    lift a genuinely low-contrast frame (this is what the previous version of
+    that test was unintentionally exercising)."""
+    rng = np.random.default_rng(0)
+    gray = np.clip(rng.normal(128, 20, (200, 200)), 0, 255).astype(np.uint8)
+    flat = np.dstack([gray, gray, gray])
+    r = AutoEditor().analyze(_save(tmp_path, "flat.png", flat))
+    assert r.contrast > 1.0
 
 
 def test_dark_exposure_is_gentle_not_extreme(tmp_path):

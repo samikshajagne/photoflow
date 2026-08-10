@@ -36,10 +36,12 @@ Scope: layout geometry only -- no image decoding, no I/O, no new pip deps.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import math
 from typing import Optional
 
 from core.album.facecrop import face_safe_cover_crop
+from core.album.pacing import PACING_UNIFORM, chunk_by_counts, pace_counts
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -519,6 +521,83 @@ def choose_template(
 
 
 # --------------------------------------------------------------------------- #
+# Photo -> frame assignment
+# --------------------------------------------------------------------------- #
+# How much a crowded-photo-in-a-small-cell pairing costs, relative to
+# orientation mismatch. Orientation mismatch is a log-ratio, so a frame twice
+# the photo's aspect costs ~0.69; at 0.35 the crowding term can overturn a
+# near-tie on orientation but never a clear one. Faces are worth a nudge here,
+# not a veto -- the wrong-shaped cell is visible on every spread, whereas a
+# slightly small group photo is only a missed opportunity.
+_W_CROWD = 0.35
+
+# Above this many photos on one spread, an exhaustive search costs more than the
+# result is worth (8! = 40320 pairings) and the heuristic takes over.
+_MAX_EXHAUSTIVE_ASSIGN = 7
+
+
+def _rank_fractions(values: list[float]) -> list[float]:
+    """
+    Map values to ``[0, 1]`` by rank: smallest -> 0.0, largest -> 1.0.
+
+    Rank rather than magnitude, so the result depends only on the ordering
+    within this spread. That keeps the assignment cost scale-free: a spread of
+    two- and three-face photos is graded the same way as one of five- and
+    fifty-face photos. Equal values share the mean of the ranks they span, so
+    ties never break arbitrarily. A uniform list maps entirely to 0.5.
+    """
+    n = len(values)
+    if n <= 1:
+        return [0.5] * n
+
+    order = sorted(range(n), key=lambda i: (values[i], i))
+    ranks = [0.0] * n
+    pos = 0
+    while pos < n:
+        end = pos
+        while end + 1 < n and values[order[end + 1]] == values[order[pos]]:
+            end += 1
+        shared = (pos + end) / 2.0 / (n - 1)
+        for k in range(pos, end + 1):
+            ranks[order[k]] = shared
+        pos = end + 1
+    return ranks
+
+
+def _min_cost_assignment(cost: list[list[float]]) -> Optional[dict[int, int]]:
+    """
+    Optimal ``{row: column}`` assignment by brute force, or ``None`` if too big.
+
+    ``cost[row][col]`` is the cost of that pairing; every row gets a distinct
+    column. Spreads hold a handful of photos, so enumerating permutations is
+    both exact and instant — and unlike a greedy match it cannot paint itself
+    into a corner by taking a locally cheap pair first. Ties resolve to the
+    lexicographically first permutation, keeping output deterministic.
+
+    Returns ``None`` when the matrix is larger than
+    :data:`_MAX_EXHAUSTIVE_ASSIGN`, so the caller can fall back.
+    """
+    n = len(cost)
+    if n == 0:
+        return {}
+    if n > _MAX_EXHAUSTIVE_ASSIGN:
+        return None
+
+    best_total: Optional[float] = None
+    best: tuple[int, ...] = ()
+    for perm in itertools.permutations(range(n)):
+        total = 0.0
+        for row, col in enumerate(perm):
+            total += cost[row][col]
+            if best_total is not None and total >= best_total:
+                break  # cannot beat the incumbent; abandon this permutation
+        else:
+            if best_total is None or total < best_total:
+                best_total, best = total, perm
+    return {row: col for row, col in enumerate(best)}
+
+
+# --------------------------------------------------------------------------- #
 # Engine
 # --------------------------------------------------------------------------- #
 class AlbumLayoutEngine:
@@ -545,13 +624,14 @@ class AlbumLayoutEngine:
         items: list[PhotoItem],
         spec: AlbumSpec,
         per_spread: Optional[int] = None,
+        pacing: str = PACING_UNIFORM,
     ) -> list[Spread]:
         """
         Place ``items`` into a deterministic list of spreads.
 
-        Items are chunked in order into groups of ``per_spread`` photos (each
-        group becomes one spread), a template is chosen for the group's size,
-        each relative frame is converted to absolute spread pixels honoring
+        Items are chunked in order (uniformly, or to a narrative rhythm — see
+        ``pacing``), a template is chosen for each group's size, each relative
+        frame is converted to absolute spread pixels honoring
         margins/bleed/gutter, and a face-safe cover-fit crop is computed for
         each photo.
 
@@ -561,6 +641,12 @@ class AlbumLayoutEngine:
             per_spread: Photos per spread. When ``None``, a heuristic picks a
                 pleasing count (up to 4). The value is always clamped to
                 ``[1, max_per_spread]``.
+            pacing: Narrative rhythm name from :mod:`core.album.pacing`.
+                The default ``"uniform"`` gives every spread the same count.
+                A rhythm instead varies the count around ``per_spread`` —
+                dense spreads followed by a single full-bleed image — without
+                changing the total spread count, so the page budget is
+                unaffected either way.
 
         Returns:
             A list of :class:`Spread` objects covering every item, in order.
@@ -576,10 +662,12 @@ class AlbumLayoutEngine:
             return []
 
         chunk_size = self._resolve_per_spread(len(items), per_spread)
+        counts = pace_counts(
+            len(items), chunk_size, self.max_per_spread, rhythm=pacing
+        )
 
         spreads: list[Spread] = []
-        for index, start in enumerate(range(0, len(items), chunk_size)):
-            chunk = items[start : start + chunk_size]
+        for index, chunk in enumerate(chunk_by_counts(items, counts)):
             # Pick a designed template that matches the photos' orientations,
             # varying the choice across spreads so the album doesn't look like a
             # uniform grid. Avoid gutter-crossing frames on bound double-pages.
@@ -592,9 +680,9 @@ class AlbumLayoutEngine:
             # A lone photo fills the spread (full-bleed hero); collage cells fit
             # the whole photo so nobody is cropped.
             fit = FIT_COVER if len(chunk) == 1 else FIT_CONTAIN
-            # Match photos to frames by orientation so portraits land in tall
-            # cells and landscapes in wide ones (less cropping / less letterbox).
-            pairs = self._assign_by_orientation(chunk, frames, spec)
+            # Match photos to frames so portraits land in tall cells, landscapes
+            # in wide ones, and crowded photos in cells big enough to see faces in.
+            pairs = self._assign_to_frames(chunk, frames, spec)
             placements = tuple(
                 self._place(item, frame, spec, fit) for item, frame in pairs
             )
@@ -608,10 +696,11 @@ class AlbumLayoutEngine:
             )
 
         logger.info(
-            "Laid out %d photo(s) into %d spread(s) at %d per spread.",
+            "Laid out %d photo(s) into %d spread(s), pacing=%s, counts=%s.",
             len(items),
             len(spreads),
-            chunk_size,
+            pacing,
+            counts,
         )
         return spreads
 
@@ -654,31 +743,93 @@ class AlbumLayoutEngine:
         h = frame.h * spec.spread_height_px
         return (w / h) if h else 1.0
 
-    def _assign_by_orientation(
+    def _assign_to_frames(
         self, items: list[PhotoItem], frames: tuple[Frame, ...], spec: AlbumSpec
     ) -> list[tuple[PhotoItem, Frame]]:
         """
-        Pair photos to frames so their aspect ratios match as closely as
-        possible (portrait photos to tall frames, landscape to wide ones).
+        Pair photos to frames, trading off aspect fit against face visibility.
 
-        Deterministic greedy match: both photos and frames are sorted by aspect
-        ratio and zipped, then emitted in the original frame order so spread
-        positions are preserved. Ties break by index for stable output.
+        Two things matter and they sometimes disagree:
+
+        - **Orientation fit** — a portrait photo in a tall frame wastes less
+          space than in a wide one. Scored as the absolute difference of
+          log-aspects, so "twice too wide" costs the same as "twice too tall".
+        - **Face visibility** — a fifteen-person family group dropped into the
+          smallest cell on the spread renders every face too small to recognise.
+          A template's cells differ substantially in area, so *which* cell a
+          crowded photo gets is a real quality decision, not a detail.
+
+        Note the face term is about *size*, not cropping: multi-photo spreads
+        are laid out with :data:`FIT_CONTAIN`, so the whole photo is shown and
+        no face can be sliced. (Cropping happens on single-photo hero spreads,
+        where there is only one frame and nothing to assign, and in the designed
+        -template renderer, which scores crop damage via
+        :func:`core.album.facecrop.face_crop_loss`.)
+
+        Both terms are rank-normalised within the spread, so the cost is
+        scale-free: what counts is which photo is *most* crowded and which frame
+        is *largest* here, not their absolute values.
+
+        Frames and photos are matched to minimise total cost — exhaustively for
+        the small counts a spread actually holds, and by the previous
+        sort-and-zip heuristic beyond that. Results are emitted in the original
+        frame order, so spread positions are preserved, and ties break by index
+        so the output is deterministic.
         """
         n = min(len(items), len(frames))
         if n <= 1:
             return list(zip(items, frames))
-        items_by_aspect = sorted(
-            range(n), key=lambda i: (items[i].aspect_ratio, i)
+
+        cost = self._assignment_costs(items[:n], frames[:n], spec)
+        assignment = _min_cost_assignment(cost) or self._assign_by_aspect_rank(
+            items, frames, spec, n
         )
+        return [(items[assignment[j]], frames[j]) for j in range(n)]
+
+    def _assignment_costs(
+        self, items: list[PhotoItem], frames: tuple[Frame, ...], spec: AlbumSpec
+    ) -> list[list[float]]:
+        """Cost matrix ``[frame_index][item_index]`` for frame/photo pairing."""
+        n = len(items)
+        crowd_rank = _rank_fractions([len(it.face_boxes) for it in items])
+        area_rank = _rank_fractions([f.w * f.h for f in frames])
+        frame_aspects = [self._frame_pixel_aspect(f, spec) for f in frames]
+
+        matrix: list[list[float]] = []
+        for j in range(n):
+            row: list[float] = []
+            for i in range(n):
+                orientation = abs(
+                    math.log(max(frame_aspects[j], 1e-3))
+                    - math.log(max(items[i].aspect_ratio, 1e-3))
+                )
+                # Crowded photo (high rank) in a small frame (low area rank).
+                crowding = crowd_rank[i] * (1.0 - area_rank[j])
+                row.append(orientation + _W_CROWD * crowding)
+            matrix.append(row)
+        return matrix
+
+    def _assign_by_aspect_rank(
+        self,
+        items: list[PhotoItem],
+        frames: tuple[Frame, ...],
+        spec: AlbumSpec,
+        n: int,
+    ) -> dict[int, int]:
+        """
+        Orientation-only fallback: sort both by aspect ratio and zip.
+
+        Used when a spread holds more photos than an exhaustive search can
+        afford. Ignores crowding, but never mismatches orientation.
+        """
+        items_by_aspect = sorted(range(n), key=lambda i: (items[i].aspect_ratio, i))
         frames_by_aspect = sorted(
             range(n), key=lambda j: (self._frame_pixel_aspect(frames[j], spec), j)
         )
-        # frame index -> assigned item index
-        assignment: dict[int, int] = {}
-        for item_i, frame_j in zip(items_by_aspect, frames_by_aspect):
-            assignment[frame_j] = item_i
-        return [(items[assignment[j]], frames[j]) for j in range(n)]
+        return {
+            frame_j: item_i
+            for item_i, frame_j in zip(items_by_aspect, frames_by_aspect)
+        }
 
     def _frame_to_pixels(self, frame: Frame, spec: AlbumSpec) -> PixRect:
         """

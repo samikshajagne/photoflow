@@ -3,12 +3,14 @@ Album settings dialog for PhotoFlow.
 
 Lets the photographer choose the album's physical specification and layout
 density before building: page size (presets or a custom width x height), print
-resolution, single- vs double-page spreads (with a binding gutter), and how
-densely photos are packed onto each spread (which controls the spread count).
+resolution, single- vs double-page spreads (with a binding gutter), how densely
+photos are packed onto each spread (which controls the spread count), and the
+pacing that density is varied around.
 
-The dialog only collects choices; it produces an :class:`AlbumSpec` and a
-density string for the layout selector. Defaults match the previous hardcoded
-behaviour (12x12 in, 300 dpi, double-page, balanced).
+The dialog only collects choices; it produces an :class:`AlbumSpec` plus density
+and pacing strings for the layout selector. Defaults match the previous
+hardcoded behaviour (12x12 in, 300 dpi, double-page, balanced) except pacing,
+which defaults to the editorial rhythm.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from core.album.layout_select import (
     DENSITY_DENSE,
     DENSITY_SPACIOUS,
 )
+from core.album.pacing import PACING_EDITORIAL, PACING_GENTLE, PACING_UNIFORM
 
 # Page-size presets: label -> (width_in, height_in). "Custom…" enables the
 # width/height spinboxes.
@@ -54,6 +57,15 @@ _DENSITIES = [
     ("Dense — more photos per spread (fewer spreads)", DENSITY_DENSE),
 ]
 
+# Pacing decides whether every spread carries the same number of photos or the
+# count varies. It does not change the album's length either way -- that stays
+# the density setting's job -- so the two can be chosen independently.
+_PACINGS = [
+    ("Editorial — dense spreads, then one photo given the page", PACING_EDITORIAL),
+    ("Gentle — vary density, no near-empty spreads", PACING_GENTLE),
+    ("Uniform — same number of photos on every spread", PACING_UNIFORM),
+]
+
 _THEMES = [
     ("Classic — geometric shapes (circles, ovals, diamonds)", "classic"),
     ("Natural — editorial layouts (hero + overlapping frames)", "natural"),
@@ -69,6 +81,7 @@ class AlbumSettingsDialog(QDialog):
         parent: Optional[QWidget] = None,
         spec: Optional[AlbumSpec] = None,
         density: str = DENSITY_BALANCED,
+        pacing: str = PACING_EDITORIAL,
         cover_title: str = "",
         cover_date: str = "",
         target_pages: int = 0,
@@ -127,6 +140,12 @@ class AlbumSettingsDialog(QDialog):
         for label, key in _DENSITIES:
             self.density.addItem(label, key)
         form.addRow("Photos per spread:", self.density)
+
+        # Pacing (the rhythm that density is varied around).
+        self.pacing = QComboBox()
+        for label, key in _PACINGS:
+            self.pacing.addItem(label, key)
+        form.addRow("Pacing:", self.pacing)
 
         # Target album length. 0 = automatic (~20-30 spreads, all photos fit).
         self.target_pages_box = QSpinBox()
@@ -187,10 +206,10 @@ class AlbumSettingsDialog(QDialog):
         # Wiring + initial values.
         self.preset.currentIndexChanged.connect(self._on_preset_changed)
         self.double_page.toggled.connect(self.gutter_in.setEnabled)
-        self._load_from_spec(spec, density)
+        self._load_from_spec(spec, density, pacing)
 
     # ------------------------------------------------------------------ #
-    def _load_from_spec(self, spec: AlbumSpec, density: str) -> None:
+    def _load_from_spec(self, spec: AlbumSpec, density: str, pacing: str) -> None:
         # Match a preset if the size is one; otherwise select Custom.
         size = (float(spec.page_width_in), float(spec.page_height_in))
         match = next(
@@ -207,6 +226,8 @@ class AlbumSettingsDialog(QDialog):
         self.gutter_in.setEnabled(bool(spec.double_page_spread))
         dens_idx = self.density.findData(density)
         self.density.setCurrentIndex(dens_idx if dens_idx >= 0 else 1)
+        pace_idx = self.pacing.findData(pacing)
+        self.pacing.setCurrentIndex(pace_idx if pace_idx >= 0 else 0)
         self._on_preset_changed(self.preset.currentIndex())
 
     def _on_preset_changed(self, index: int) -> None:
@@ -231,6 +252,10 @@ class AlbumSettingsDialog(QDialog):
 
     def selected_density(self) -> str:
         return str(self.density.currentData())
+
+    def selected_pacing(self) -> str:
+        """Narrative rhythm name for the layout selector."""
+        return str(self.pacing.currentData())
 
     def cover_title(self) -> str:
         """Couple names for the cover (empty string if not provided)."""

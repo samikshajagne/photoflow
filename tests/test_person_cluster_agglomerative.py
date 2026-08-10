@@ -58,10 +58,17 @@ def test_corrects_a_chain_greedy_would_split():
 
 
 def test_single_face_is_one_cluster():
+    # min_cluster_size defaults to 2 (singletons filtered), so ask for 1 here.
     faces = [_face("a", 0, [1, 0, 0])]
-    clusters = PersonClusterer(method="agglomerative").cluster(faces)
+    clusters = PersonClusterer(method="agglomerative", min_cluster_size=1).cluster(faces)
     assert len(clusters) == 1
     assert clusters[0].size == 1
+
+
+def test_singletons_filtered_by_default_min_size():
+    # A lone face with the default min_cluster_size=2 is dropped (background guest).
+    faces = [_face("a", 0, [1, 0, 0])]
+    assert PersonClusterer(method="agglomerative").cluster(faces) == []
 
 
 def test_empty_input():

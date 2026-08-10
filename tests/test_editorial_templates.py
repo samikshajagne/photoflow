@@ -23,15 +23,18 @@ def test_slots_stay_in_bounds():
             assert x + w <= 1 + eps and y + h <= 1 + eps
 
 
-def test_hero_is_borderless_and_tallest():
-    # The first slot of the 3/4-photo layouts is the hero: no border, and it spans
-    # the full inset height (tallest slot on the spread).
+def test_hero_is_borderless_tallest_and_cutout_eligible():
+    # The first slot of the 3/4-photo layouts is the hero: no border, tallest,
+    # and cutout-eligible (so the cutouts toggle acts on it).
     for n in (3, 4):
         t = {t.name: t for t in editorial_templates()}[f"editorial-{n}"]
         hero = t.slots[0]
         assert hero.border == 0.0
+        assert hero.use_cutout is True
         assert hero.rect[3] == max(s.rect[3] for s in t.slots)  # tallest
         assert hero.rect[3] > 0.9  # nearly full height (inset by the page margin)
+        # Inset (non-hero) slots are not cutout-eligible.
+        assert all(s.use_cutout is False for s in t.slots[1:])
 
 
 def test_selectable_via_select_template():

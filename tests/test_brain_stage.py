@@ -42,10 +42,10 @@ class _CountingBrain(VisionBrain):
 
 
 def test_resolve_api_key_prefers_explicit(monkeypatch):
-    monkeypatch.setenv("GOOGLE_VISION_API_KEY", "env-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "env-key")
     assert resolve_api_key("explicit") == "explicit"
     assert resolve_api_key(None) == "env-key"
-    monkeypatch.delenv("GOOGLE_VISION_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert resolve_api_key(None) == ""
 
 

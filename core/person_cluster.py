@@ -37,6 +37,53 @@ logger = get_logger(__name__)
 # Using 0.40 was over-fragmenting (15 clusters for 45 faces in a wedding shoot).
 DEFAULT_DISTANCE_MAX: float = 0.55
 
+# IMPORTANT: this threshold is a property of the *embedding model*, not of
+# clustering in general. Different backends put same-person and
+# different-person pairs at different distances, so swapping the embedder
+# without re-tuning silently wrecks clustering -- too low over-fragments (one
+# person becomes many), too high merges different guests into one person.
+#
+# ARCFACE_DISTANCE_MAX is the value above, kept as a named alias so call sites
+# can be explicit about which model they mean.
+ARCFACE_DISTANCE_MAX: float = DEFAULT_DISTANCE_MAX
+
+# SFace (128-d, Apache-2.0; see core.sface_backend) is a smaller model with
+# less-separated embeddings, so it needs a tighter threshold than ArcFace.
+# PROVISIONAL: derive the real value for your photos with
+# ``scripts/benchmark_embedders.py``, which reports the same-person vs
+# different-person distance distributions and the best separating threshold.
+SFACE_DISTANCE_MAX: float = 0.40
+
+# Backend name -> tuned threshold, for callers that select a backend by name.
+DISTANCE_MAX_BY_BACKEND: dict[str, float] = {
+    "arcface": ARCFACE_DISTANCE_MAX,
+    "insightface": ARCFACE_DISTANCE_MAX,
+    "buffalo_l": ARCFACE_DISTANCE_MAX,
+    "sface": SFACE_DISTANCE_MAX,
+}
+
+
+def distance_max_for_backend(backend_name: str) -> float:
+    """
+    Tuned cosine-distance threshold for a named embedding backend.
+
+    Falls back to the ArcFace default for unknown names (with a warning) since
+    that is the historical behaviour, but prefer adding an explicit entry to
+    :data:`DISTANCE_MAX_BY_BACKEND` -- an untuned threshold is a silent
+    clustering-quality bug, not a crash.
+    """
+    key = (backend_name or "").strip().lower()
+    if key in DISTANCE_MAX_BY_BACKEND:
+        return DISTANCE_MAX_BY_BACKEND[key]
+    logger.warning(
+        "No tuned clustering threshold for embedding backend %r; falling back "
+        "to the ArcFace value (%.2f). Tune it with "
+        "scripts/benchmark_embedders.py and add it to DISTANCE_MAX_BY_BACKEND.",
+        backend_name,
+        DEFAULT_DISTANCE_MAX,
+    )
+    return DEFAULT_DISTANCE_MAX
+
 # Clusters with fewer than this many faces are treated as noise (background
 # guests, mis-detections) and filtered out before showing in the UI. A
 # cluster of 1 face from 1 photo is rarely a meaningful identity.

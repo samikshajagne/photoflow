@@ -21,11 +21,24 @@ import pytest
 
 from core.organizer import FOLDER_BEST_SHOTS, FOLDER_DUPLICATES, FOLDER_REVIEW
 from core.pipeline import PhotoFlowPipeline
+from tests.conftest import StubFaceDetector
 from utils.config import load_config
 
 
 def _pipeline() -> PhotoFlowPipeline:
-    return PhotoFlowPipeline.from_config(load_config())
+    """
+    Pipeline with a stub face detector that succeeds and finds no faces.
+
+    These fixtures are synthetic (checkerboards/gradients) so a real detector
+    finds nothing in them anyway -- but only if it *runs*. Without MediaPipe
+    installed, detection instead *fails* for every image, which makes the
+    pipeline bypass face scoring altogether and changes the resulting
+    categories. Injecting the stub keeps these assertions true on any machine.
+    See ``tests/conftest.py::StubFaceDetector``.
+    """
+    pipe = PhotoFlowPipeline.from_config(load_config())
+    pipe.face_detector = StubFaceDetector()
+    return pipe
 
 
 # --------------------------------------------------------------------------- #

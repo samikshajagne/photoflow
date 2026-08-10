@@ -242,25 +242,38 @@ class AutoEditor:
             AutoEditError: if the image is missing, empty, or undecodable.
         """
         bgr = self._load_bgr(image_path)
+        recipe = self.analyze_array(bgr, face_regions=face_regions)
+        logger.info(
+            "Auto-edit analyze '%s': gains=(%.2f,%.2f,%.2f) exposure=%.2f "
+            "contrast=%.2f straighten=%.2f crop=%s",
+            image_path,
+            recipe.white_balance_gains[0],
+            recipe.white_balance_gains[1],
+            recipe.white_balance_gains[2],
+            recipe.exposure,
+            recipe.contrast,
+            recipe.straighten_deg,
+            recipe.crop,
+        )
+        return recipe
 
+    def analyze_array(
+        self,
+        bgr: np.ndarray,
+        face_regions: Sequence[tuple[float, float, float, float]] = (),
+    ) -> EditRecipe:
+        """
+        Same as :meth:`analyze`, but takes an already-decoded BGR array.
+
+        Lets callers who already have pixels in memory (e.g. a UI preview
+        working on an in-memory crop) skip the disk round-trip that
+        :meth:`analyze` does via :meth:`_load_bgr`.
+        """
         gains = self._gray_world_gains(bgr)
         exposure = self._exposure_multiplier(bgr)
         contrast = self._contrast_multiplier(bgr)
         straighten = self._straighten_degrees(bgr)
         crop = self._face_aware_crop(bgr.shape, face_regions)
-
-        logger.info(
-            "Auto-edit analyze '%s': gains=(%.2f,%.2f,%.2f) exposure=%.2f "
-            "contrast=%.2f straighten=%.2f crop=%s",
-            image_path,
-            gains[0],
-            gains[1],
-            gains[2],
-            exposure,
-            contrast,
-            straighten,
-            crop,
-        )
         return EditRecipe(
             white_balance_gains=gains,
             exposure=exposure,
@@ -454,10 +467,20 @@ class AutoEditor:
             AutoEditError: if the image is missing/empty/undecodable or the
                 recipe is not an :class:`EditRecipe`.
         """
+        bgr = self._load_bgr(image_path)
+        return self.apply_array(bgr, recipe)
+
+    def apply_array(self, bgr: np.ndarray, recipe: EditRecipe) -> np.ndarray:
+        """
+        Same as :meth:`apply`, but takes an already-decoded BGR array.
+
+        Raises:
+            AutoEditError: if ``recipe`` is not an :class:`EditRecipe`.
+        """
         if not isinstance(recipe, EditRecipe):
             raise AutoEditError(f"recipe must be an EditRecipe, got {type(recipe)!r}")
 
-        bgr = self._load_bgr(image_path).astype(np.float32)
+        bgr = bgr.astype(np.float32)
 
         # White balance: gains are (R, G, B); the array is BGR.
         r_gain, g_gain, b_gain = recipe.white_balance_gains

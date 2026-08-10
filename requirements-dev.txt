@@ -1,7 +1,16 @@
-# Additional dependencies needed for development: tests, linting, type-checking.
+# PhotoFlow — development dependencies (tests, linting, type-checking).
+#
+#     pip install -r requirements-dev.txt
+#
+# Includes the runtime requirements but NOT requirements-extra.txt: the test
+# suite is written to pass without the optional packages, which is deliberate --
+# it's how we know a release build (which also excludes them) actually works.
+# Install extras separately if you want to exercise those code paths.
+
 -r requirements.txt
 
 pytest>=7.4,<9.0
 pytest-cov>=4.1,<6.0
 ruff>=0.5,<1.0
 mypy>=1.8,<2.0
+pyinstaller>=6.0,<7.0                # packaging/build.bat (Windows builds only)

@@ -28,6 +28,39 @@ _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _LOG_FILENAME = "photoflow.log"
 
 
+def _resolve_log_dir(configured: str) -> Path:
+    """
+    Turn the configured ``log_dir`` into a directory we can actually write to.
+
+    The default in ``default_config.yaml`` is the relative path ``"logs"``,
+    which is fine in a source checkout but wrong for an installed application:
+    a relative path resolves against the *current working directory*, which for
+    a desktop shortcut is unpredictable (often a system directory), and the
+    install directory itself is read-only for normal users. So:
+
+    * an absolute path is honoured exactly as given (an admin can point logs
+      anywhere they like),
+    * a relative path resolves against the project root when running from
+      source -- keeping ``logs/photoflow.log`` where developers expect it,
+    * and against the per-user data directory once frozen.
+
+    Falls back to the per-user log directory if the chosen one can't be
+    created, because failing to start over a log file would be absurd.
+    """
+    from utils.paths import bundle_root, is_frozen, user_log_dir
+
+    candidate = Path(configured)
+    if not candidate.is_absolute():
+        candidate = (user_log_dir() if is_frozen() else bundle_root() / candidate)
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        return candidate
+    except OSError:
+        fallback = user_log_dir()
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
 def setup_logging(config: LoggingConfig) -> logging.Logger:
     """
     Configure the ``photoflow`` root logger and attach handlers.
@@ -58,8 +91,7 @@ def setup_logging(config: LoggingConfig) -> logging.Logger:
 
     formatter = logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT)
 
-    log_dir = Path(config.log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = _resolve_log_dir(config.log_dir)
     log_file = log_dir / _LOG_FILENAME
 
     file_handler = logging.handlers.RotatingFileHandler(

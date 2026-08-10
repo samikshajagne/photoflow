@@ -30,6 +30,7 @@ from core.organizer import (
     FOLDER_REVIEW,
 )
 from core.pipeline import PhotoFlowPipeline, PipelineError, PipelineResult
+from tests.conftest import StubFaceDetector
 from utils.config import load_config
 
 
@@ -66,7 +67,18 @@ def _build_sample_folder(tmp_path: Path) -> Path:
 
 
 def _pipeline() -> PhotoFlowPipeline:
-    return PhotoFlowPipeline.from_config(load_config())
+    """
+    Pipeline with a stub face detector that succeeds and finds no faces.
+
+    The fixtures here are synthetic, so a working detector finds nothing in
+    them -- but only if it actually runs. With MediaPipe absent, detection
+    *fails* for every image, and the pipeline then bypasses face scoring
+    entirely, which shifts photos between BestShots and Review and broke the
+    category assertions below. See ``tests/conftest.py::StubFaceDetector``.
+    """
+    pipe = PhotoFlowPipeline.from_config(load_config())
+    pipe.face_detector = StubFaceDetector()
+    return pipe
 
 
 # --------------------------------------------------------------------------- #

@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from utils.config import ConfigError, load_config
 from utils.logger import get_logger, setup_logging
+from utils.version import COMPANY_NAME, __version__
 from ui_qt.theme import apply_dark_theme
 from ui_qt.views.main_window import MainWindow
 
@@ -73,12 +74,56 @@ def main(argv: list[str] | None = None) -> int:
 
     app = QApplication(argv)
     app.setApplicationName("PhotoFlow")
+    app.setOrganizationName(COMPANY_NAME)
+    app.setApplicationVersion(__version__)
     apply_dark_theme(app)
 
-    window = MainWindow()
+    # Opens on the in-window startup chooser (Generate Album / Passport
+    # Photos / Make a Collage) rather than a popup dialog; picking a card
+    # rebuilds this same window in place (see MainWindow._enter_mode).
+    window = MainWindow(mode="chooser")
     window.show()
-    logger.info("PhotoFlow desktop UI started.")
+    logger.info("PhotoFlow %s desktop UI started.", __version__)
+
+    _start_licensing(window)
     return app.exec()
+
+
+def _start_licensing(parent) -> None:
+    """
+    Set up licensing and (opt-in) usage counts, without ever blocking startup.
+
+    Everything here is wrapped: a licensing bug must not stop a studio from
+    opening the application. Worst case we log it and carry on unlicensed, which
+    errs in the customer's favour -- the opposite trade-off would mean a bug on
+    our side stops someone delivering an album.
+    """
+    try:
+        from core.licensing import LicenseManager
+        from core.telemetry import configure
+
+        manager = LicenseManager()
+        status = manager.status()
+
+        # Usage counts are off unless the customer has explicitly agreed.
+        # TELEMETRY_ENDPOINT stays None until a collection endpoint exists; the
+        # counters are still kept locally so support can ask for them.
+        counters = configure(consent=manager.telemetry_consent(), endpoint=None)
+        counters.record("app_launched")
+
+        # Re-check an activated licence at most weekly, in the background.
+        manager.revalidate()
+
+        # Only interrupt when there's something the user must act on: trial
+        # nearly over, trial ended, or a licence that needs re-checking.
+        if status.should_nag or manager.telemetry_consent() is None:
+            from ui_qt.views.license_dialog import LicenseDialog
+
+            LicenseDialog(manager, telemetry=counters, parent=parent).exec()
+
+        parent.license_manager = manager  # so an About/Licence menu can reuse it
+    except Exception as exc:  # noqa: BLE001 - licensing must never break startup
+        logger.warning("Licensing setup skipped after an error: %s", exc)
 
 
 if __name__ == "__main__":
