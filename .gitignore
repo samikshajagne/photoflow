@@ -31,6 +31,25 @@ website/downloads/*.exe
 .env
 utils/_secrets.py
 
+# Backend secrets. backend/.env holds the PostgreSQL/Neon connection string and
+# the JWT signing secret — the two most damaging values in the project, and the
+# only copy of them that ever sits on a developer's disk. backend/.env.example is
+# the committed template.
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# The backend's virtual environment is separate from the desktop app's, so that
+# a backend dependency upgrade can never break an installer build.
+.venv-backend/
+
+# Alembic emits SQL here when run with --sql; it contains real schema and,
+# depending on the command, real data.
+backend/*.sql
+
+# Scratch directory used when delivering files onto this machine.
+_to_delete/
+
 # OS / editor cruft
 .DS_Store
 .vscode/

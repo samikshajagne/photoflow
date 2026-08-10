@@ -1,0 +1,31 @@
+# PhotoFlow backend — runtime dependencies.
+#
+#     pip install -r backend/requirements.txt
+#
+# Deliberately separate from the repository-root requirements.txt. The desktop
+# app and the backend share a repository, not a dependency set: shipping FastAPI
+# and SQLAlchemy inside a PyInstaller build would add weight to an installer for
+# code that never runs there, and — more importantly — the machine that installs
+# these is the only machine that should ever be able to reach the database.
+
+# --- Web framework ----------------------------------------------------------- #
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+
+# --- Database ---------------------------------------------------------------- #
+SQLAlchemy>=2.0,<3.0
+alembic>=1.13,<2.0
+# psycopg 3 with the binary wheel: no local libpq build on Windows, and it is
+# the driver SQLAlchemy 2.x treats as current (psycopg2 is maintenance-only).
+psycopg[binary]>=3.1,<4.0
+
+# --- Configuration and validation -------------------------------------------- #
+pydantic>=2.7,<3.0
+pydantic-settings>=2.4,<3.0
+
+# --- Security ---------------------------------------------------------------- #
+# Argon2id, used directly rather than through passlib — see app/security/passwords.py
+# for why (passlib is effectively unmaintained and its bcrypt backend is broken
+# against current releases).
+argon2-cffi>=23.1,<26.0
+PyJWT>=2.9,<3.0

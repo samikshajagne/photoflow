@@ -1,0 +1,15 @@
+# PhotoFlow backend — development and test dependencies.
+#
+#     pip install -r backend/requirements-dev.txt
+#
+# Mirrors the convention already used at the repository root: -dev includes the
+# runtime requirements, and lint/type-check pins match the desktop app's so a
+# single `ruff check .` at the root behaves consistently across both trees.
+
+-r requirements.txt
+
+pytest>=7.4,<9.0
+pytest-cov>=4.1,<6.0
+httpx>=0.27,<1.0          # FastAPI's TestClient transport
+ruff>=0.5,<1.0
+mypy>=1.8,<2.0
