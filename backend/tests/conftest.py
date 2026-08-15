@@ -203,18 +203,16 @@ def make_user(db):
 
 @pytest.fixture
 def make_license(db):
-    """Create a persisted licence for a user."""
-    import hashlib
-
     from app.models.enums import LicenseStatus
     from app.models.license import License
+    from app.services.licensing import hash_license_key, license_last4
 
     def _make(user, *, key: str | None = None, plan: str = "monthly", **kwargs):
         key = key or f"PF-{uuid.uuid4().hex.upper()}"
         licence = License(
             user_id=user.id,
-            key_hash=hashlib.sha256(key.encode()).hexdigest(),
-            key_last4=key[-4:],
+            key_hash=hash_license_key(key),
+            key_last4=license_last4(key),
             plan=plan,
             status=kwargs.pop("status", LicenseStatus.ACTIVE),
             **kwargs,

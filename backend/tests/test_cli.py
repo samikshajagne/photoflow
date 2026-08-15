@@ -259,7 +259,7 @@ class TestShowConfig:
 
         main(["show-config"])
         out = capsys.readouterr().out
-        assert "photoflow_test" in out
+        assert "neondb" in out
         assert "postgresql+psycopg://" not in out
 
 

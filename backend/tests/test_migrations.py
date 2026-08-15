@@ -15,6 +15,8 @@ halves of that gap.
 
 from __future__ import annotations
 
+import os
+
 from sqlalchemy import inspect
 
 from tests.conftest import BACKEND_DIR, requires_database
@@ -69,12 +71,17 @@ class TestMigrationSchema:
         cannot express. Assert they actually landed.
         """
         inspector = inspect(engine)
+
         activation_indexes = {
-            index["name"] for index in inspector.get_indexes("license_activations")
+            index["name"]
+            for index in inspector.get_indexes("license_activations")
         }
+
         credit_indexes = {
-            index["name"] for index in inspector.get_indexes("credit_transactions")
+            index["name"]
+            for index in inspector.get_indexes("credit_transactions")
         }
+
         assert "uq_license_activations_active_seat" in activation_indexes
         assert "uq_credit_transactions_user_reference" in credit_indexes
 
@@ -89,6 +96,7 @@ class TestMigrationSchema:
 
         config = Config(str(BACKEND_DIR / "alembic.ini"))
         config.set_main_option("script_location", str(BACKEND_DIR / "migrations"))
+
         assert len(ScriptDirectory.from_config(config).get_heads()) == 1
 
 
@@ -102,25 +110,29 @@ class TestMigrationGuards:
         import subprocess
         import sys
 
-        env = {
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "PYTHONPATH": str(BACKEND_DIR),
-            "PHOTOFLOW_ENVIRONMENT": "production",
-            "PHOTOFLOW_DATABASE_URL": (
-                "postgresql://u:p@ep-prod.neon.tech/photoflow"
-            ),
-            "PHOTOFLOW_JWT_SECRET": "z" * 48,
-            "PHOTOFLOW_API_BASE_URL": "https://api.example.com",
-            # Explicit, because the developer's own backend/.env is still read
-            # by the subprocess and sets DEBUG=true, which production rejects --
-            # that would abort for the right reason but the wrong one, and the
-            # test would pass without ever reaching the guard under test.
-            "PHOTOFLOW_DEBUG": "false",
-            "PHOTOFLOW_CORS_ORIGINS": "https://admin.example.com",
-            "PHOTOFLOW_TRUSTED_HOSTS": "api.example.com",
-            "PHOTOFLOW_ALLOW_SINGLE_INSTANCE_RATE_LIMIT": "true",
-            # PHOTOFLOW_MIGRATION_CONFIRM deliberately absent.
-        }
+        env = os.environ.copy()
+        env.update(
+            {
+                "PYTHONPATH": str(BACKEND_DIR),
+                "PHOTOFLOW_ENVIRONMENT": "production",
+                "PHOTOFLOW_DATABASE_URL": (
+                    "postgresql://u:p@ep-prod.neon.tech/photoflow"
+                ),
+                "PHOTOFLOW_JWT_SECRET": "z" * 48,
+                "PHOTOFLOW_API_BASE_URL": "https://api.example.com",
+                # Explicit, because the developer's own backend/.env is still
+                # read by the subprocess and sets DEBUG=true, which production
+                # rejects -- that would abort for the right reason but the wrong
+                # one, and the test would pass without ever reaching the guard
+                # under test.
+                "PHOTOFLOW_DEBUG": "false",
+                "PHOTOFLOW_CORS_ORIGINS": "https://admin.example.com",
+                "PHOTOFLOW_TRUSTED_HOSTS": "api.example.com",
+                "PHOTOFLOW_ALLOW_SINGLE_INSTANCE_RATE_LIMIT": "true",
+                # PHOTOFLOW_MIGRATION_CONFIRM deliberately absent.
+            }
+        )
+
         result = subprocess.run(
             [sys.executable, "-m", "alembic", "upgrade", "head"],
             cwd=str(BACKEND_DIR),
@@ -129,9 +141,13 @@ class TestMigrationGuards:
             text=True,
             timeout=120,
         )
+
         assert result.returncode != 0
+
         combined = result.stdout + result.stderr
+
         assert "Refusing to run migrations against PRODUCTION" in combined
+
         # The refusal must name the target without leaking the password.
         assert "ep-prod.neon.tech/photoflow" in combined
         assert "u:p@" not in combined

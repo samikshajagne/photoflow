@@ -7,6 +7,7 @@ re-derived inline: the caller's IP address, and the rate limiter.
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -17,24 +18,28 @@ from app.security.rate_limit import RateLimiter, RateLimitVerdict
 
 def client_ip(request: Request) -> str:
     """
-    The caller's address, as well as it can be known.
+    Return a valid IP address for rate limiting and audit logging.
 
-    Behind a reverse proxy the socket address is the proxy, so
-    ``X-Forwarded-For`` is consulted — but only its **first** entry, and only
-    because this API is expected to run behind exactly one trusted proxy that
-    appends to the header. Note plainly what that means: a client can put
-    anything in ``X-Forwarded-For``, so this value is *not* an authentication
-    signal. It is used for rate-limit bucketing and audit context, where the
-    worst case of a forged value is that an attacker spreads their own attempts
-    across buckets — which the per-account limit, keyed on the email rather than
-    the IP, already covers.
+    X-Forwarded-For is accepted only when its first value is a valid IP.
+    Invalid/non-IP client addresses (such as Starlette's ``testclient``)
+    fall back to a valid unspecified IPv4 address so PostgreSQL's INET
+    column can always accept the value.
     """
     forwarded = request.headers.get("X-Forwarded-For", "")
     if forwarded:
         first = forwarded.split(",")[0].strip()
-        if first:
-            return first[:64]
-    return request.client.host if request.client else "unknown"
+        try:
+            ipaddress.ip_address(first)
+            return first
+        except ValueError:
+            pass
+
+    host = request.client.host if request.client else ""
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        return "0.0.0.0"
 
 
 ClientIp = Annotated[str, Depends(client_ip)]
@@ -54,13 +59,12 @@ def enforce(verdict: RateLimitVerdict) -> None:
     Raise 429 when a limit is exceeded.
 
     ``Retry-After`` is included because a well-behaved client should back off
-    rather than hammer, and the header is the standard way to say how long. The
-    body says nothing about which limit was hit or how much budget remains — a
-    limiter that reports its own state precisely is a limiter that can be
-    mapped and worked around.
+    rather than hammer, and the header is the standard way to say how long.
+    The body says nothing about which limit was hit or how much budget remains.
     """
     if verdict.allowed:
         return
+
     raise HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         detail="Too many attempts. Please wait and try again.",
