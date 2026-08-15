@@ -91,7 +91,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def _start_licensing(parent) -> None:
     """
-    Set up licensing and (opt-in) usage counts, without ever blocking startup.
+    Set up authentication, licensing and (opt-in) usage counts, without ever
+    blocking startup.
 
     Everything here is wrapped: a licensing bug must not stop a studio from
     opening the application. Worst case we log it and carry on unlicensed, which
@@ -99,10 +100,22 @@ def _start_licensing(parent) -> None:
     our side stops someone delivering an album.
     """
     try:
-        from core.licensing import LicenseManager
+        from core.auth import AuthManager
+        from core.licensing import HttpBackend, LicenseManager
         from core.telemetry import configure
 
-        manager = LicenseManager()
+        # AuthManager owns the session (login/refresh/logout); licensing only
+        # ever needs a bearer token, so ensure_access_token is handed straight
+        # to HttpBackend as its token provider rather than duplicating any
+        # authentication logic here. ensure_access_token() refreshes a stale
+        # token automatically, and returns None gracefully if nobody is
+        # signed in -- HttpBackend handles that without a network call.
+        auth_manager = AuthManager()
+        backend = HttpBackend(
+            base_url=f"{auth_manager.base_url}/licenses",
+            token_provider=auth_manager.ensure_access_token,
+        )
+        manager = LicenseManager(backend=backend)
         status = manager.status()
 
         # Usage counts are off unless the customer has explicitly agreed.
@@ -121,7 +134,8 @@ def _start_licensing(parent) -> None:
 
             LicenseDialog(manager, telemetry=counters, parent=parent).exec()
 
-        parent.license_manager = manager  # so an About/Licence menu can reuse it
+        parent.auth_manager = auth_manager      # so a future login/logout UI can reuse it
+        parent.license_manager = manager        # so an About/Licence menu can reuse it
     except Exception as exc:  # noqa: BLE001 - licensing must never break startup
         logger.warning("Licensing setup skipped after an error: %s", exc)
 

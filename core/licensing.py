@@ -50,7 +50,7 @@ import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Protocol
+from typing import Callable, Optional, Protocol
 
 from utils.logger import get_logger
 from utils.paths import user_data_dir
@@ -170,6 +170,9 @@ class LicenseState:
     machine: str = ""
     seats: int = 0
     customer: str = ""
+    # The backend's id for this licence. Only needed to call /deactivate, which
+    # (unlike activate/validate) is keyed by id rather than by the licence key.
+    license_id: str = ""
     telemetry_consent: Optional[bool] = None  # None = not yet asked
 
     def to_dict(self) -> dict:
@@ -245,6 +248,10 @@ class ActivationResult:
     customer: str = ""
     # True when the server was unreachable (as opposed to refusing the key).
     offline: bool = False
+    # The backend's id for this licence (empty for OfflineBackend and for
+    # deactivate, which doesn't return one). Persisted so a later deactivation
+    # can identify the licence to the server.
+    license_id: str = ""
 
 
 class LicenseBackend(Protocol):
@@ -259,6 +266,8 @@ class LicenseBackend(Protocol):
     def activate(self, key: str, machine: str) -> ActivationResult: ...
 
     def validate(self, key: str, machine: str) -> ActivationResult: ...
+
+    def deactivate(self, license_id: str, machine: str) -> ActivationResult: ...
 
 
 class OfflineBackend:
@@ -281,45 +290,90 @@ class OfflineBackend:
     def validate(self, key: str, machine: str) -> ActivationResult:
         return self.activate(key, machine)
 
+    def deactivate(self, license_id: str, machine: str) -> ActivationResult:
+        # There is no server to tell; freeing the seat locally (handled by
+        # LicenseManager.deactivate) is the whole operation in offline mode.
+        return ActivationResult(ok=True, message="Deactivated.")
+
 
 class HttpBackend:
     """
-    Talks to an HTTP licence API.
+    Talks to the production PhotoFlow licence API
+    (``backend/app/api/v1/licenses.py``).
 
-    Expects ``POST {base_url}/activate`` and ``/validate`` taking
-    ``{"key", "machine", "product", "version"}`` and returning
-    ``{"ok": bool, "message": str, "expires_on": "YYYY-MM-DD", "seats": int,
-    "customer": str}``. Most providers can be adapted to this with a thin
-    serverless function, which keeps provider specifics out of the client.
+    Expects ``POST {base_url}/activate``, ``/validate`` and ``/deactivate``.
+    Every request carries the signed-in customer's access token, obtained by
+    calling ``token_provider()`` -- a zero-argument callable that should be
+    ``AuthManager.ensure_access_token`` so a merely-expired token is refreshed
+    transparently and no authentication logic is duplicated here. When a
+    ``token_provider`` is configured but returns no token (nobody is signed
+    in), the request is skipped entirely and a plain, non-offline refusal is
+    returned -- there is nothing wrong with the licence, so it must not be
+    reported as "offline" or crash the caller.
 
     Network failure returns ``offline=True`` rather than ``ok=False``: the
     caller must be able to tell "your key is invalid" from "I couldn't ask",
-    because those deserve very different behaviour.
+    because those deserve very different behaviour. A request the server
+    *did* receive and refuse (bad key, wrong owner, seat limit, not signed
+    in) is a normal, reachable refusal -- not "offline" -- so it is reported
+    the same way.
     """
 
-    def __init__(self, base_url: str, timeout: float = 8.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        token_provider: Optional[Callable[[], Optional[str]]] = None,
+        timeout: float = 8.0,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.token_provider = token_provider
         self.timeout = timeout
 
-    def _post(self, endpoint: str, key: str, machine: str) -> ActivationResult:
+    def _post(self, endpoint: str, payload: dict) -> ActivationResult:
         import urllib.error
         import urllib.request
 
-        body = json.dumps({
-            "key": key,
-            "machine": machine,
-            "product": "photoflow",
-            "version": __version__,
-        }).encode("utf-8")
+        token: Optional[str] = None
+        if self.token_provider is not None:
+            token = self.token_provider()
+            if not token:
+                return ActivationResult(
+                    ok=False,
+                    message="You need to be signed in to manage your licence. "
+                            "Please log in and try again.",
+                )
+
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/{endpoint}",
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # The server was reached; it refused the request. This is an
+            # HTTPError (a URLError subclass) but must NOT fall into the
+            # offline branch below, or a bad key/seat limit/ownership refusal
+            # would be misreported to the user as "couldn't reach the server".
+            try:
+                error_body = json.loads(exc.read().decode("utf-8"))
+            except Exception:  # noqa: BLE001 - malformed or empty error body
+                error_body = {}
+            return ActivationResult(
+                ok=False,
+                message=str(
+                    error_body.get("detail")
+                    or error_body.get("message")
+                    or "The licence server rejected this request."
+                ),
+            )
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             logger.info("Licence server unreachable (%s).", exc)
             return ActivationResult(ok=False, offline=True,
@@ -335,13 +389,21 @@ class HttpBackend:
             expires_on=str(data.get("expires_on", "")),
             seats=int(data.get("seats", 0) or 0),
             customer=str(data.get("customer", "")),
+            license_id=str(data.get("license_id", "")),
         )
 
     def activate(self, key: str, machine: str) -> ActivationResult:
-        return self._post("activate", key, machine)
+        return self._post("activate", {
+            "key": key, "machine": machine, "product": "photoflow", "version": __version__,
+        })
 
     def validate(self, key: str, machine: str) -> ActivationResult:
-        return self._post("validate", key, machine)
+        return self._post("validate", {
+            "key": key, "machine": machine, "product": "photoflow", "version": __version__,
+        })
+
+    def deactivate(self, license_id: str, machine: str) -> ActivationResult:
+        return self._post("deactivate", {"license_id": license_id, "machine": machine})
 
 
 # --------------------------------------------------------------------------- #
@@ -500,6 +562,7 @@ class LicenseManager:
         self.state.machine = machine_fingerprint()
         self.state.seats = result.seats
         self.state.customer = result.customer
+        self.state.license_id = result.license_id
         try:
             save_state(self.state, self._path)
         except LicenseError as exc:
@@ -539,13 +602,30 @@ class LicenseManager:
         return result
 
     def deactivate(self) -> None:
-        """Clear the stored licence (for moving a seat to another machine)."""
+        """
+        Clear the stored licence (for moving a seat to another machine).
+
+        Tells the backend first, so the server frees the seat immediately
+        rather than waiting for the activation to simply go stale. A backend
+        that can't or won't do this -- ``OfflineBackend``, a server that's
+        unreachable, a test double with no ``deactivate`` method -- is not
+        treated as an error: local state is cleared unconditionally, so the
+        UI is never left stuck because of a network problem.
+        """
+        backend_deactivate = getattr(self.backend, "deactivate", None)
+        if callable(backend_deactivate) and self.state.key:
+            try:
+                backend_deactivate(self.state.license_id, machine_fingerprint())
+            except Exception as exc:  # noqa: BLE001 - local deactivation must proceed regardless
+                logger.info("Backend deactivation skipped/failed (%s).", exc)
+
         self.state.key = ""
         self.state.activated_on = ""
         self.state.last_validated = ""
         self.state.expires_on = ""
         self.state.seats = 0
         self.state.customer = ""
+        self.state.license_id = ""
         try:
             save_state(self.state, self._path)
         except LicenseError as exc:
