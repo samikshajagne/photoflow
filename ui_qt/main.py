@@ -111,6 +111,11 @@ def _start_licensing(parent) -> None:
         # token automatically, and returns None gracefully if nobody is
         # signed in -- HttpBackend handles that without a network call.
         auth_manager = AuthManager()
+        # Best-effort: populates auth_manager.user (studio name, email, status)
+        # for the Account & Licence UI. A fresh install with no stored session
+        # returns None immediately with no network call; any failure here is
+        # swallowed by ensure_access_token() itself, never raised.
+        auth_manager.ensure_access_token()
         backend = HttpBackend(
             base_url=f"{auth_manager.base_url}/licenses",
             token_provider=auth_manager.ensure_access_token,
@@ -136,6 +141,10 @@ def _start_licensing(parent) -> None:
 
         parent.auth_manager = auth_manager      # so a future login/logout UI can reuse it
         parent.license_manager = manager        # so an About/Licence menu can reuse it
+        # Populate the header's account/licence chip now that both managers
+        # exist. set_account_context degrades gracefully on its own, so this
+        # is safe even if auth_manager.user never got populated above.
+        parent.set_account_context(auth_manager, manager, telemetry=counters)
     except Exception as exc:  # noqa: BLE001 - licensing must never break startup
         logger.warning("Licensing setup skipped after an error: %s", exc)
 

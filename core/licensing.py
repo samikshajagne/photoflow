@@ -170,6 +170,11 @@ class LicenseState:
     machine: str = ""
     seats: int = 0
     customer: str = ""
+    # The customer's plan/tier, if the backend's response includes one. The
+    # production activate/validate response does not today, so this stays ""
+    # until it does -- the Account & Licence UI shows that as "unknown" rather
+    # than a made-up default.
+    plan: str = ""
     # The backend's id for this licence. Only needed to call /deactivate, which
     # (unlike activate/validate) is keyed by id rather than by the licence key.
     license_id: str = ""
@@ -246,6 +251,9 @@ class ActivationResult:
     expires_on: str = ""
     seats: int = 0
     customer: str = ""
+    # Wired from the backend response's "plan" field if/when it sends one
+    # (see LicenseState.plan). Never fabricated client-side.
+    plan: str = ""
     # True when the server was unreachable (as opposed to refusing the key).
     offline: bool = False
     # The backend's id for this licence (empty for OfflineBackend and for
@@ -389,6 +397,7 @@ class HttpBackend:
             expires_on=str(data.get("expires_on", "")),
             seats=int(data.get("seats", 0) or 0),
             customer=str(data.get("customer", "")),
+            plan=str(data.get("plan", "")),
             license_id=str(data.get("license_id", "")),
         )
 
@@ -562,6 +571,7 @@ class LicenseManager:
         self.state.machine = machine_fingerprint()
         self.state.seats = result.seats
         self.state.customer = result.customer
+        self.state.plan = result.plan
         self.state.license_id = result.license_id
         try:
             save_state(self.state, self._path)
@@ -625,6 +635,7 @@ class LicenseManager:
         self.state.expires_on = ""
         self.state.seats = 0
         self.state.customer = ""
+        self.state.plan = ""
         self.state.license_id = ""
         try:
             save_state(self.state, self._path)

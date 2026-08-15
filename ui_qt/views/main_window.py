@@ -47,6 +47,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
+    QHBoxLayout,
     QMainWindow,
     QMessageBox,
     QProgressDialog,
@@ -69,6 +70,7 @@ from core.scanner import ImageScanner, ScanError
 from utils.config import ConfigError, load_config
 from utils.logger import get_logger
 from ui_qt.models.photo_index import PhotoEntry, PhotoIndex
+from ui_qt.views.account_dialog import AccountDialog, AccountIndicator, summarize_account
 from ui_qt.views.center_view import CenterView
 from ui_qt.views.metadata_panel import MetadataPanel
 from ui_qt.views.mode_chooser_view import ModeChooserView
@@ -92,6 +94,16 @@ class MainWindow(QMainWindow):
         self._mode = mode  # "chooser" | "album" | "passport" -- see the module docstring
         self._set_title_for_mode(mode)
         self.resize(1280, 800)
+
+        # Account & Licence header chip (top-right, persists across every
+        # mode -- see _build_account_header). Hidden until set_account_context
+        # is called; a bare MainWindow() (every existing test, and briefly at
+        # startup before ui_qt.main finishes constructing AuthManager/
+        # LicenseManager) looks exactly as it did before this existed.
+        self._auth_manager: Optional[object] = None
+        self._license_manager: Optional[object] = None
+        self._telemetry: Optional[object] = None
+        self._build_account_header()
 
         self._folder: Optional[Path] = None
         self._result = None
@@ -155,6 +167,79 @@ class MainWindow(QMainWindow):
 
     def _set_title_for_mode(self, mode: str) -> None:
         self.setWindowTitle(self._MODE_TITLES.get(mode, "PhotoFlow"))
+
+    # ----------------------------------------------------------------- #
+    # Account & Licence header chip
+    # ----------------------------------------------------------------- #
+    def _build_account_header(self) -> None:
+        """
+        A persistent header area (via ``setMenuWidget``) holding the account
+        chip, right-aligned. Unlike the per-mode toolbar, this is built once
+        and is untouched by ``_enter_mode``'s toolbar teardown, so it survives
+        switching between the chooser, album, passport and collage modes.
+
+        The container itself starts hidden (see below) so it has zero visual
+        footprint until ``set_account_context`` has something real to show.
+        """
+        self._account_header = QWidget()
+        self._account_header.setVisible(False)
+        header_layout = QHBoxLayout(self._account_header)
+        header_layout.setContentsMargins(12, 6, 12, 6)
+        header_layout.addStretch(1)
+
+        self.account_indicator = AccountIndicator()
+        self.account_indicator.clicked.connect(self._on_account_indicator_clicked)
+        header_layout.addWidget(self.account_indicator)
+
+        self.setMenuWidget(self._account_header)
+
+    def set_account_context(
+        self, auth_manager=None, license_manager=None, telemetry=None
+    ) -> None:
+        """
+        Populate the header's account/licence chip.
+
+        Called by ``ui_qt.main`` once ``AuthManager``/``LicenseManager`` exist.
+        Never raises: a problem here is cosmetic, not a reason to leave the
+        window unusable (mirrors the try/except already wrapping licensing
+        setup in ``ui_qt.main._start_licensing``).
+        """
+        try:
+            self._auth_manager = auth_manager
+            self._license_manager = license_manager
+            self._telemetry = telemetry
+            headline, subtitle = summarize_account(auth_manager, license_manager)
+            self.account_indicator.set_info(f"👤 {headline}", subtitle)
+            self._account_header.setVisible(True)
+        except Exception as exc:  # noqa: BLE001 - the header is polish, not critical
+            logger.warning("Could not populate the account/licence header: %s", exc)
+
+    def _on_account_indicator_clicked(self) -> None:
+        dialog = AccountDialog(
+            self._auth_manager,
+            self._license_manager,
+            telemetry=self._telemetry,
+            parent=self,
+        )
+        dialog.signedOut.connect(self._on_signed_out)
+        dialog.exec()
+        # Reflect anything changed inside (activation, deactivation, sign-out).
+        headline, subtitle = summarize_account(self._auth_manager, self._license_manager)
+        self.account_indicator.set_info(f"👤 {headline}", subtitle)
+
+    def _on_signed_out(self) -> None:
+        """
+        Clear the account session from the header.
+
+        Signing out only ends the authenticated session -- it does not touch
+        the licence file (that's what "Manage License" -> deactivate is for),
+        so the licence half of the chip can legitimately keep showing whatever
+        core.licensing already knows locally.
+        """
+        self._auth_manager = None
+        headline, subtitle = summarize_account(None, self._license_manager)
+        self.account_indicator.set_info(f"👤 {headline}", subtitle)
+        self.statusBar().showMessage("Signed out.")
 
     def _show_initial_status(self) -> None:
         if self._mode == "album":
