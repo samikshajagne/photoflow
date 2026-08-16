@@ -14,7 +14,7 @@
   // backend/README.md for how it's hosted). Until it's replaced, this fetch
   // fails harmlessly and the static content below is what visitors see --
   // which is the safe default, not a bug.
-  var API_BASE = "https://REPLACE-WITH-YOUR-BACKEND-URL.onrender.com/api/v1";
+  var API_BASE = "https://photoflow-api.onrender.com/api/v1";
 
   var box = document.querySelector("[data-release-box]");
   if (!box || API_BASE.indexOf("REPLACE-WITH-YOUR-BACKEND-URL") !== -1) {
@@ -69,11 +69,11 @@
           var released = new Date(release.published_at);
           parts.push(
             "Released " +
-              released.toLocaleDateString(undefined, {
-                day: "numeric",
-                month: "long",
-                year: "numeric"
-              })
+            released.toLocaleDateString(undefined, {
+              day: "numeric",
+              month: "long",
+              year: "numeric"
+            })
           );
         }
 
