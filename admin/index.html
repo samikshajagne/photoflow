@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhotoFlow Admin</title>
+    <link rel="stylesheet" href="assets/css/admin.css">
+</head>
+
+<body>
+
+    <!-- =====================================================
+         LOGIN
+         ===================================================== -->
+
+    <section id="login-screen" class="login-screen">
+
+        <div class="login-card">
+
+            <div class="brand">
+
+                <div class="brand-mark">P</div>
+
+                <div>
+                    <h1>PhotoFlow</h1>
+                    <span>Administration</span>
+                </div>
+
+            </div>
+
+            <div class="login-heading">
+                <h2>Welcome back</h2>
+                <p>Sign in to manage PhotoFlow customers, licenses and releases.</p>
+            </div>
+
+            <form id="login-form">
+
+                <div class="form-group">
+                    <label for="email">Email</label>
+
+                    <input id="email" name="email" type="email" autocomplete="username" placeholder="admin@example.com"
+                        required>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+
+                    <input id="password" name="password" type="password" autocomplete="current-password"
+                        placeholder="Enter your password" required>
+                </div>
+
+                <div id="error-message" class="error-message" style="display:none"></div>
+
+                <button type="submit" class="primary-button login-button">
+                    Sign in
+                </button>
+
+            </form>
+
+            <p class="login-footer">
+                PhotoFlow private administration
+            </p>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         DASHBOARD
+         ===================================================== -->
+
+    <section id="dashboard" class="dashboard" style="display:none">
+
+        <!-- Sidebar -->
+
+        <aside class="sidebar">
+
+            <div class="sidebar-brand">
+
+                <div class="brand-mark">P</div>
+
+                <div>
+                    <strong>PhotoFlow</strong>
+                    <span>Admin</span>
+                </div>
+
+            </div>
+
+
+            <nav class="navigation">
+
+                <button class="nav-item active" data-section="overview">
+                    <span class="nav-icon">⌂</span>
+                    <span>Overview</span>
+                </button>
+
+                <button class="nav-item" data-section="customers">
+                    <span class="nav-icon">♙</span>
+                    <span>Customers</span>
+                </button>
+
+                <button class="nav-item" data-section="licenses">
+                    <span class="nav-icon">◆</span>
+                    <span>Licenses</span>
+                </button>
+
+                <button class="nav-item" data-section="devices">
+                    <span class="nav-icon">▣</span>
+                    <span>Devices</span>
+                </button>
+
+                <button class="nav-item" id="nav-releases" data-section="releases">
+                    <span class="nav-icon">⇩</span>
+                    <span>Releases</span>
+                </button>
+
+            </nav>
+
+
+            <div class="sidebar-bottom">
+
+                <div class="admin-mini">
+
+                    <div class="avatar">A</div>
+
+                    <div class="admin-mini-info">
+                        <strong id="admin-name">Administrator</strong>
+                        <span>Admin</span>
+                    </div>
+
+                </div>
+
+                <button id="logout-button" class="logout-button">
+                    Sign out
+                </button>
+
+            </div>
+
+        </aside>
+
+
+        <!-- Main content -->
+
+        <main class="main-content">
+
+            <!-- Header -->
+
+            <header class="topbar">
+
+                <div>
+                    <span class="eyebrow">PHOTOFLOW ADMIN</span>
+                    <h1 id="page-title">Overview</h1>
+                </div>
+
+                <div class="topbar-status">
+                    <span class="status-dot"></span>
+                    System online
+                </div>
+
+            </header>
+
+            <div id="success-message"
+                style="display:none; margin:16px 0 0; padding:11px 13px; border-radius:8px; background:#eefaf1; border:1px solid #bfe6c9; color:var(--success); font-size:13px;">
+            </div>
+
+
+            <!-- =================================================
+                 OVERVIEW
+                 ================================================= -->
+
+            <section id="section-overview" class="dashboard-section active-section">
+
+                <div class="welcome-panel">
+
+                    <div>
+                        <span class="eyebrow">CONTROL CENTER</span>
+
+                        <h2>
+                            Manage your PhotoFlow business
+                        </h2>
+
+                        <p>
+                            Customers, licenses, devices and releases
+                            are managed from one place.
+                        </p>
+                    </div>
+
+                    <div class="welcome-mark">
+                        P
+                    </div>
+
+                </div>
+
+
+                <div class="stats-grid">
+
+                    <div class="stat-card">
+
+                        <span class="stat-label">
+                            Customers
+                        </span>
+
+                        <strong id="stat-users" class="stat-value">
+                            —
+                        </strong>
+
+                        <span class="stat-meta">
+                            Registered accounts
+                        </span>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span class="stat-label">
+                            Active customers
+                        </span>
+
+                        <strong id="stat-active-users" class="stat-value">
+                            —
+                        </strong>
+
+                        <span class="stat-meta">
+                            Not disabled
+                        </span>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span class="stat-label">
+                            Licenses
+                        </span>
+
+                        <strong id="stat-licenses" class="stat-value">
+                            —
+                        </strong>
+
+                        <span class="stat-meta">
+                            Total issued
+                        </span>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span class="stat-label">
+                            Active licenses
+                        </span>
+
+                        <strong id="stat-active-licenses" class="stat-value">
+                            —
+                        </strong>
+
+                        <span class="stat-meta">
+                            Current entitlements
+                        </span>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span class="stat-label">
+                            Active devices
+                        </span>
+
+                        <strong id="stat-devices" class="stat-value">
+                            —
+                        </strong>
+
+                        <span class="stat-meta">
+                            Activated seats
+                        </span>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- =================================================
+                 CUSTOMERS
+                 ================================================= -->
+
+            <section id="section-customers" class="dashboard-section">
+
+                <div class="section-heading">
+
+                    <div>
+                        <span class="eyebrow">
+                            CUSTOMER MANAGEMENT
+                        </span>
+
+                        <h2>Customers</h2>
+
+                        <p>
+                            View and manage PhotoFlow accounts.
+                        </p>
+                    </div>
+
+                    <button id="create-user-button" class="primary-button">
+                        + New customer
+                    </button>
+
+                </div>
+
+
+                <div class="panel">
+
+                    <div id="users-table" class="full-table">
+                        <div class="empty-state">
+                            Loading customers...
+                        </div>
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- =================================================
+                 LICENSES
+                 ================================================= -->
+
+            <section id="section-licenses" class="dashboard-section">
+
+                <div class="section-heading">
+
+                    <div>
+                        <span class="eyebrow">
+                            ENTITLEMENTS
+                        </span>
+
+                        <h2>Licenses</h2>
+
+                        <p>
+                            Create and manage customer licenses.
+                        </p>
+                    </div>
+
+                    <button id="create-license-button" class="primary-button">
+                        + Create license
+                    </button>
+
+                </div>
+
+
+                <div class="panel">
+
+                    <div id="licenses-table" class="full-table">
+                        <div class="empty-state">
+                            Loading licenses...
+                        </div>
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- =================================================
+                 DEVICES
+                 ================================================= -->
+
+            <section id="section-devices" class="dashboard-section">
+
+                <div class="section-heading">
+
+                    <div>
+                        <span class="eyebrow">
+                            ACTIVATIONS
+                        </span>
+
+                        <h2>Devices</h2>
+
+                        <p>
+                            Monitor machines consuming license seats.
+                        </p>
+                    </div>
+
+                </div>
+
+
+                <div class="panel">
+
+                    <div id="devices-table" class="full-table">
+                        <div class="empty-state">
+                            Select a license to view its devices.
+                        </div>
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- =================================================
+                 RELEASES
+                 ================================================= -->
+
+            <section id="section-releases" class="dashboard-section">
+
+                <div class="section-heading">
+
+                    <div>
+                        <span class="eyebrow">
+                            DOWNLOADS
+                        </span>
+
+                        <h2>Releases</h2>
+
+                        <p>
+                            Publish PhotoFlow installer builds for the public website and the desktop updater.
+                        </p>
+                    </div>
+
+                    <button id="create-release-button" class="primary-button">
+                        + New release
+                    </button>
+
+                </div>
+
+
+                <div class="panel">
+
+                    <div id="releases-full-table" class="full-table">
+                        <div class="empty-state">
+                            Loading releases...
+                        </div>
+                    </div>
+
+                </div>
+
+            </section>
+
+        </main>
+
+    </section>
+
+
+    <!-- =====================================================
+         CREATE CUSTOMER MODAL
+         ===================================================== -->
+
+    <div id="create-user-modal" class="modal" style="display:none">
+
+        <div class="modal-backdrop"></div>
+
+        <div class="modal-card">
+
+            <div class="modal-header">
+
+                <div>
+                    <span class="eyebrow">
+                        CUSTOMER
+                    </span>
+
+                    <h2>Create customer</h2>
+                </div>
+
+                <button class="modal-close" data-close-modal="create-user-modal">
+                    ×
+                </button>
+
+            </div>
+
+
+            <form id="create-user-form">
+
+                <div class="form-group">
+
+                    <label for="new-user-name">
+                        Name
+                    </label>
+
+                    <input id="new-user-name" name="name" type="text" required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="new-user-email">
+                        Email
+                    </label>
+
+                    <input id="new-user-email" name="email" type="email" required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="new-user-password">
+                        Initial password
+                    </label>
+
+                    <input id="new-user-password" name="password" type="password" required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="new-user-role">
+                        Role
+                    </label>
+
+                    <select id="new-user-role" name="role">
+                        <option value="CLIENT">Client</option>
+                        <option value="ADMIN">Admin</option>
+                    </select>
+
+                </div>
+
+
+                <div class="form-actions">
+
+                    <button type="button" class="secondary-button" data-close-modal="create-user-modal">
+                        Cancel
+                    </button>
+
+                    <button type="submit" class="primary-button">
+                        Create customer
+                    </button>
+
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+
+
+    <!-- =====================================================
+         CREATE LICENSE MODAL
+         ===================================================== -->
+
+    <div id="create-license-modal" class="modal" style="display:none">
+
+        <div class="modal-backdrop"></div>
+
+        <div class="modal-card">
+
+            <div class="modal-header">
+
+                <div>
+                    <span class="eyebrow">
+                        ENTITLEMENT
+                    </span>
+
+                    <h2>Create license</h2>
+                </div>
+
+                <button class="modal-close" data-close-modal="create-license-modal">
+                    ×
+                </button>
+
+            </div>
+
+
+            <form id="create-license-form">
+
+                <div class="form-group">
+
+                    <label for="new-license-user">
+                        Customer
+                    </label>
+
+                    <select id="new-license-user" name="user_id" required>
+                        <option value="">
+                            Select customer
+                        </option>
+                    </select>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="new-license-plan">
+                        Plan
+                    </label>
+
+                    <select id="new-license-plan" name="plan">
+                        <option value="monthly">
+                            Monthly
+                        </option>
+
+                        <option value="annual">
+                            Annual
+                        </option>
+
+                        <option value="lifetime">
+                            Lifetime
+                        </option>
+                    </select>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="new-license-seats">
+                        Activation limit
+                    </label>
+
+                    <input id="new-license-seats" name="activation_limit" type="number" min="1" value="1" required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="new-license-starts">
+                        Starts
+                    </label>
+
+                    <input id="new-license-starts" name="starts_at" type="date">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="new-license-expires">
+                        Expiry
+                    </label>
+
+                    <input id="new-license-expires" name="expires_at" type="date">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="new-license-notes">
+                        Notes (optional)
+                    </label>
+
+                    <input id="new-license-notes" name="notes" type="text">
+
+                </div>
+
+
+                <div class="form-actions">
+
+                    <button type="button" class="secondary-button" data-close-modal="create-license-modal">
+                        Cancel
+                    </button>
+
+                    <button type="submit" class="primary-button">
+                        Create license
+                    </button>
+
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+
+
+    <!-- =====================================================
+         LICENSE KEY REVEAL MODAL
+         ===================================================== -->
+
+    <div id="license-key-modal" class="modal" style="display:none">
+
+        <div class="modal-backdrop"></div>
+
+        <div class="modal-card">
+
+            <div class="modal-header">
+
+                <div>
+                    <span class="eyebrow">
+                        ENTITLEMENT
+                    </span>
+
+                    <h2>License created</h2>
+                </div>
+
+                <button class="modal-close" data-close-modal="license-key-modal">
+                    ×
+                </button>
+
+            </div>
+
+            <p class="muted">
+                This key is shown only once. Copy it now and share it with the
+                customer -- it cannot be retrieved again.
+            </p>
+
+            <div class="panel" style="padding:16px; margin:16px 0;">
+                <code id="generated-license-key" style="word-break:break-all; font-size:15px;"></code>
+            </div>
+
+            <div class="form-actions">
+
+                <button type="button" class="secondary-button" data-close-modal="license-key-modal">
+                    Close
+                </button>
+
+                <button type="button" id="copy-license-key" class="primary-button">
+                    Copy key
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- =====================================================
+         REGISTER RELEASE MODAL
+         ===================================================== -->
+
+    <div id="release-modal" class="modal" style="display:none">
+
+        <div class="modal-backdrop"></div>
+
+        <div class="modal-card">
+
+            <div class="modal-header">
+
+                <div>
+                    <span class="eyebrow">
+                        RELEASE
+                    </span>
+
+                    <h2>Register a release</h2>
+                </div>
+
+                <button class="modal-close" data-close-modal="release-modal">
+                    ×
+                </button>
+
+            </div>
+
+
+            <form id="release-form">
+
+                <div class="form-group">
+
+                    <label for="release-version">
+                        Version
+                    </label>
+
+                    <input id="release-version" type="text" placeholder="0.9.1" required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="release-platform">
+                        Platform
+                    </label>
+
+                    <select id="release-platform">
+                        <option value="Windows">Windows</option>
+                    </select>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="release-channel">
+                        Channel
+                    </label>
+
+                    <select id="release-channel">
+                        <option value="stable">Stable</option>
+                        <option value="beta">Beta</option>
+                    </select>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="release-filename">
+                        Installer filename
+                    </label>
+
+                    <input id="release-filename" type="text" placeholder="PhotoFlow-Setup-0.9.1.exe" required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="release-size">
+                        Installer size (MB)
+                    </label>
+
+                    <input id="release-size" type="number" min="1" step="1" placeholder="109" required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="release-url">
+                        Download URL
+                    </label>
+
+                    <input id="release-url" type="url"
+                        placeholder="https://github.com/.../releases/download/v0.9.1/PhotoFlow-Setup-0.9.1.exe" required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="release-sha256">
+                        SHA-256 (optional)
+                    </label>
+
+                    <input id="release-sha256" type="text" placeholder="64 hex characters">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="release-min-version">
+                        Minimum supported version (optional)
+                    </label>
+
+                    <input id="release-min-version" type="text" placeholder="0.8.0">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="release-notes">
+                        Release notes (optional)
+                    </label>
+
+                    <input id="release-notes" type="text" placeholder="What changed in this release">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="release-notes-url">
+                        Release notes URL (optional)
+                    </label>
+
+                    <input id="release-notes-url" type="url" placeholder="https://photoflow.pages.dev/changelog.html">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="release-critical">
+                        <input id="release-critical" type="checkbox" style="width:auto; height:auto;">
+                        Critical update (forces the upgrade prompt)
+                    </label>
+
+                </div>
+
+
+                <div class="form-actions">
+
+                    <button type="button" class="secondary-button" data-close-modal="release-modal">
+                        Cancel
+                    </button>
+
+                    <button type="submit" class="primary-button">
+                        Register release
+                    </button>
+
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+
+
+    <script src="assets/js/admin.js"></script>
+
+</body>
+
+</html>

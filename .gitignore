@@ -54,3 +54,4 @@ _to_delete/
 .DS_Store
 .vscode/
 .idea/
+.venv-release/

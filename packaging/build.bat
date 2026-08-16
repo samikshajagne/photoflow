@@ -5,6 +5,7 @@ REM  Samiksha Technologies
 REM
 REM  Usage (from the project root, in an activated virtualenv):
 REM      packaging\build.bat
+REM      packaging\build.bat SKIP_TESTS   (skips step 2/4 only; preflight always runs)
 REM
 REM  Produces:
 REM      dist\PhotoFlow\PhotoFlow.exe                     (frozen app)
@@ -15,6 +16,9 @@ REM  Setup 6 (iscc.exe) on PATH. See BUILD.md.
 REM ===========================================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0.."
+
+set SKIP_TESTS=
+if /I "%~1"=="SKIP_TESTS" set SKIP_TESTS=1
 
 echo.
 echo === PhotoFlow build ===
@@ -46,9 +50,14 @@ python packaging\preflight.py || goto :preflight_failed
 
 REM --- Step 2: run the tests ------------------------------------------------
 REM Shipping a build that fails its own tests is not worth the time saved.
+REM SKIP_TESTS skips only this step -- preflight (step 1) always still runs.
 echo.
-echo [2/4] Running tests...
-python -m pytest tests -q || goto :tests_failed
+if defined SKIP_TESTS (
+    echo [2/4] Skipping tests ^(SKIP_TESTS^)...
+) else (
+    echo [2/4] Running tests...
+    python -m pytest tests -q || goto :tests_failed
+)
 
 REM --- Step 3: freeze with PyInstaller -------------------------------------
 echo.

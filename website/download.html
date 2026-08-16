@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download PhotoFlow — Samiksha Technologies</title>
+<meta name="description" content="Download PhotoFlow for Windows 10 and 11. Free while in beta, with system requirements and installation notes.">
+<link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a class="brand" href="index.html" aria-label="Samiksha Technologies home">
+      <img src="assets/img/logo.svg" alt="Samiksha Technologies" width="194" height="36">
+    </a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav class="site-nav" id="site-nav" aria-label="Main">
+      <a href="index.html">Home</a>
+      <a href="features.html">Features</a>
+      <a href="download.html">Download</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="support.html">Support</a>
+      <a href="about.html">About</a>
+      <a href="contact.html">Contact</a>
+      <a class="btn btn-primary" href="download.html">Get PhotoFlow</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero">
+    <div class="container narrow">
+      <p class="eyebrow">Download</p>
+      <h1>Get PhotoFlow</h1>
+      <p class="lead">Free while in beta. One installer, no account needed, and no photo limits.</p>
+      
+    </div>
+  </section>
+
+  <section class="section-sm">
+    <div class="container narrow">
+      <!-- data-release-* hooks let assets/js/download.js refresh this box from
+           the backend's /api/v1/releases/current endpoint once it's deployed
+           (see that file). Everything below already works with no JavaScript
+           and no backend at all -- it's a real, current, hand-maintained
+           fallback, not a placeholder that needs JS to look right. -->
+      <div class="dl-box reveal"><div class="dl-inner" data-release-box>
+        <span class="badge"><span class="badge-dot"></span> <span data-release-badge-text>Beta 0.9.0</span></span>
+        <h2 class="mt-2">PhotoFlow for Windows</h2>
+        <p class="dim">64-bit installer for Windows 10 and 11.</p>
+        <!-- Points at the GitHub Releases "latest" asset, which is a permanent
+             URL: publish a new release and this button serves it with no site
+             change needed. It 404s until your first release exists.
+             Installers are NOT stored in this repo — Cloudflare Pages caps files
+             at ~25 MB and a 100+ MB binary would bloat git history forever. -->
+        <a class="btn btn-primary btn-lg" data-release-link
+           href="https://github.com/samikshajagne/photoflow/releases/latest/download/PhotoFlow-Setup.exe">
+          Download PhotoFlow&nbsp;0.9.0
+        </a>
+        <div class="dl-meta" data-release-meta>
+          <span>Windows 10 / 11 (64-bit)</span>
+          <span>Approx. 109&nbsp;MB</span>
+          <span>Released 15 August 2026</span>
+        </div>
+      </div></div>
+
+      <div class="callout warn mt-2">
+        <strong>Heads up:</strong> this is a beta. It's stable enough for real
+        work and we use it on real shoots, but please keep your original photos
+        backed up as you would with any new tool — and tell us anything that
+        looks wrong.
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container narrow">
+      <h2>System requirements</h2>
+      <div class="table-wrap reveal">
+        <table>
+          <tbody>
+            <tr><th>Operating system</th><td>Windows 10 or Windows 11, 64-bit</td></tr>
+            <tr><th>Processor</th><td>Any modern 64-bit CPU. More cores make batch processing faster.</td></tr>
+            <tr><th>Memory</th><td>8&nbsp;GB minimum, 16&nbsp;GB recommended for large shoots</td></tr>
+            <tr><th>Disk space</th><td>About 2&nbsp;GB, including the bundled models</td></tr>
+            <tr><th>Display</th><td>1366&#215;768 or larger</td></tr>
+            <tr><th>Internet</th><td>Not required. Only used for updates and the first-time model download.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 class="mt-2">Installing</h2>
+      <div class="steps reveal">
+        <div class="step">
+          <div class="step-num" aria-hidden="true"></div>
+          <div><h3>Run the installer</h3><p>Double-click the downloaded file and follow the prompts.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num" aria-hidden="true"></div>
+          <div>
+            <h3>If Windows warns you</h3>
+            <p>
+              Early beta builds aren't code-signed yet, so Windows SmartScreen may
+              show a warning. Choose <em>More info</em> then <em>Run anyway</em>.
+              Code signing is on our list before the first paid release.
+            </p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num" aria-hidden="true"></div>
+          <div><h3>Open PhotoFlow</h3><p>Pick a mode and start with a small folder to get a feel for it.</p></div>
+        </div>
+      </div>
+
+      <h2 class="mt-2">Other platforms</h2>
+      <p class="dim">
+        PhotoFlow is Windows-only today, because that's what the studios we work
+        with use. If you need macOS or Linux,
+        <a href="contact.html">tell us</a> — demand is how we decide what to
+        build next.
+      </p>
+    </div>
+  </section>
+
+  <section class="section-sm">
+    <div class="container narrow">
+      <div class="cta reveal"><div class="cta-inner">
+        <h2>Something not working?</h2>
+        <p>Check the support page, or write to us and we'll help.</p>
+        <div class="btn-row center mt-2">
+          <a class="btn btn-ghost btn-lg" href="support.html">Support &amp; FAQ</a>
+          <a class="btn btn-primary btn-lg" href="contact.html">Contact us</a>
+        </div>
+      </div></div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <img src="assets/img/logo.svg" alt="Samiksha Technologies" width="184">
+        <p>Software for photo studios. PhotoFlow is our first product.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="features.html">Features</a></li>
+          <li><a href="download.html">Download</a></li>
+          <li><a href="changelog.html">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Help</h4>
+        <ul>
+          <li><a href="support.html">Support &amp; FAQ</a></li>
+          <li><a href="contact.html">Contact us</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Company</h4>
+        <ul>
+          <li><a href="about.html">About</a></li>
+          <li><a href="contact.html">Get in touch</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>&copy; <span data-year>2026</span> Samiksha Technologies. All rights reserved.</span>
+      <span>Made for photographers in India and beyond.</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/main.js"></script>
+<script src="assets/js/download.js"></script>
+</body>
+</html>

@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app.models.enums import UserRole, UserStatus
 from app.models.user import User
-from tests.conftest import requires_database
+from tests.conftest import TEST_DATABASE_URL, requires_database
 
 PASSWORD = "a-perfectly-fine-password"
 
@@ -255,11 +255,32 @@ class TestShowConfig:
         assert "test-secret-that-is-long-enough-to-pass" not in out
 
     def test_shows_the_database_without_credentials(self, capsys):
+        """
+        The contract is "host/database, no credentials" -- not any particular
+        database name. Hardcoding "neondb" tied this test to whichever real
+        database happened to be configured when it was written (Neon's default
+        database name); it has nothing to do with PhotoFlow's behaviour and
+        breaks the moment PHOTOFLOW_TEST_DATABASE_URL points somewhere else, as
+        it now does (a local/Docker ``photoflow_test``).
+
+        Deriving the expected value from PHOTOFLOW_TEST_DATABASE_URL itself --
+        the same way ``Settings.safe_database_target()`` does -- keeps this test
+        correct regardless of where the test database lives, while still
+        failing if the CLI ever regresses to printing raw credentials.
+        """
+        from urllib.parse import urlsplit
+
         from app.cli import main
 
         main(["show-config"])
         out = capsys.readouterr().out
-        assert "neondb" in out
+
+        parts = urlsplit(TEST_DATABASE_URL)
+        host = parts.hostname or "?"
+        database = (parts.path or "/?").lstrip("/") or "?"
+        expected_target = f"{host}/{database}"
+
+        assert expected_target in out
         assert "postgresql+psycopg://" not in out
 
 

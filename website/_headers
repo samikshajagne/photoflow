@@ -1,0 +1,42 @@
+# Cloudflare Pages / Netlify headers file.
+# Plain text, no build step — the host reads it at deploy time.
+
+/*
+  # --- Security -----------------------------------------------------------
+  # The site is entirely static, loads no third-party scripts and collects
+  # nothing, so the policy can be genuinely strict rather than permissive.
+  # 'unsafe-inline' for styles is only needed because a few brand colours are
+  # set inline; scripts are all external files, so script-src stays clean.
+  # connect-src lists the backend origin explicitly (see assets/js/download.js)
+  # instead of relaxing to '*' -- replace the placeholder host with the real
+  # backend URL when it's deployed, in both places, or the download page's
+  # fetch is blocked by the browser rather than by the backend's own CORS.
+  Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self' https://REPLACE-WITH-YOUR-BACKEND-URL.onrender.com; form-action 'self' mailto:; frame-ancestors 'none'; base-uri 'self'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()
+  # Two years, and only add `preload` once you're certain about HTTPS-only.
+  Strict-Transport-Security: max-age=63072000; includeSubDomains
+
+# --- Caching --------------------------------------------------------------
+# Screenshots and the logo change rarely and are versioned by filename in
+# practice, so they can be cached hard. HTML must not be, or visitors would see
+# a stale page after a deploy.
+/assets/img/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/css/*
+  Cache-Control: public, max-age=86400
+
+/assets/js/*
+  Cache-Control: public, max-age=86400
+
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# The update manifest must never be cached, or clients keep seeing the old
+# version number after a release.
+/version.json
+  Cache-Control: public, max-age=0, must-revalidate
+  Access-Control-Allow-Origin: *

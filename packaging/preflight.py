@@ -126,6 +126,15 @@ required = [
     ("imagehash", "ImageHash"),
     ("mediapipe", "mediapipe"),
     ("PyQt6", "PyQt6"),
+    # core/auth.py's imports -- both are real requirements (production login and
+    # licensing depend on them), but neither is reached by "ui_qt.main imports
+    # cleanly" below, because ui_qt.main only imports core.auth lazily, inside
+    # _start_licensing(), which then swallows a missing-module error silently
+    # (deliberately, so a licensing bug can never block startup). That means a
+    # build venv missing these would pass every other check here and produce an
+    # installer that launches fine and just has no login/licensing at all.
+    ("keyring", "keyring"),
+    ("requests", "requests"),
 ]
 for module, package in required:
     check(

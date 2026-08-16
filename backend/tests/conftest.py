@@ -225,6 +225,36 @@ def make_license(db):
 
 
 @pytest.fixture
+def make_release(db):
+    """Create a persisted release. Unique version per call by default."""
+    from app.models.enums import ReleaseStatus
+    from app.models.release import Release
+
+    def _make(*, version: str | None = None, **kwargs):
+        release = Release(
+            version=version or f"0.9.{uuid.uuid4().int % 1000}",
+            product=kwargs.pop("product", "photoflow"),
+            platform=kwargs.pop("platform", "Windows"),
+            channel=kwargs.pop("channel", "stable"),
+            status=kwargs.pop("status", ReleaseStatus.DRAFT),
+            installer_filename=kwargs.pop(
+                "installer_filename", "PhotoFlow-Setup-0.9.0.exe"
+            ),
+            size_bytes=kwargs.pop("size_bytes", 109_000_000),
+            download_url=kwargs.pop(
+                "download_url",
+                "https://github.com/example/photoflow/releases/download/v0.9.0/PhotoFlow-Setup-0.9.0.exe",
+            ),
+            **kwargs,
+        )
+        db.add(release)
+        db.flush()
+        return release
+
+    return _make
+
+
+@pytest.fixture
 def make_device(db):
     """Create a persisted device for a user."""
     from app.models.device import Device

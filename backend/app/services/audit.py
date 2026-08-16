@@ -43,6 +43,10 @@ class AuditAction:
     PASSWORD_CHANGED = "PASSWORD_CHANGED"
     RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"
     SIGNING_KEY_GENERATED = "SIGNING_KEY_GENERATED"
+    RELEASE_CREATED = "RELEASE_CREATED"
+    RELEASE_UPDATED = "RELEASE_UPDATED"
+    RELEASE_PUBLISHED = "RELEASE_PUBLISHED"
+    RELEASE_YANKED = "RELEASE_YANKED"
 
 # Substrings that make a key suspicious regardless of its full name.
 _SUSPICIOUS_FRAGMENTS = ("password", "secret", "token", "key", "credential", "authorization")

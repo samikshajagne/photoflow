@@ -19,6 +19,7 @@ files and dynamically-imported submodules that PyInstaller cannot discover by
 static analysis, so they're collected explicitly below.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -28,6 +29,16 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 # resolve the project root from there to import our version module.
 ROOT = Path(SPECPATH).resolve().parent
 sys.path.insert(0, str(ROOT))
+
+# PyInstaller resolves every relative path in Analysis() -- the entry-point
+# script in `scripts`, and each source in `datas` -- against the *.spec
+# file's own directory (packaging/), via `CONF['spec']`, not against the
+# process's current working directory. This is fixed PyInstaller behaviour,
+# not something a working-directory change (e.g. build.bat's own `cd` to the
+# project root before invoking pyinstaller) can influence -- which is exactly
+# why the build failed looking for packaging\ui_qt\main.py instead of
+# ui_qt\main.py. The fix is to make those paths absolute, anchored to ROOT,
+# regardless of where `pyinstaller` was invoked from.
 from utils.version import APP_NAME, __version__, version_tuple  # noqa: E402
 
 block_cipher = None
@@ -61,6 +72,15 @@ for pkg in ("mediapipe", "insightface", "onnxruntime", "rembg"):
         # corresponding feature degrades gracefully at runtime.
         pass
 
+# Anchor every relative source to ROOT (see the note above `ROOT = ...`):
+# PyInstaller resolves a relative `datas` source against packaging/, not the
+# project root. The literal tuples above are kept relative and unchanged, since
+# packaging/preflight.py's own parser scans this file's text for quoted string
+# pairs to confirm what's bundled -- so the anchoring happens here instead,
+# after that literal list is fully assembled. collect_data_files() above
+# already returns absolute paths, so the isabs() check leaves those alone.
+datas = [(src if os.path.isabs(src) else str(ROOT / src), dest) for src, dest in datas]
+
 # --------------------------------------------------------------------------- #
 # Dynamically-imported submodules
 # --------------------------------------------------------------------------- #
@@ -85,7 +105,7 @@ for pkg in ("mediapipe", "insightface", "onnxruntime", "psd_tools", "scipy.spati
         pass
 
 a = Analysis(
-    ["ui_qt/main.py"],
+    [str(ROOT / "ui_qt" / "main.py")],
     pathex=[str(ROOT)],
     binaries=[],
     datas=datas,

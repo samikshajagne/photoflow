@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 56" role="img" aria-label="Samiksha Technologies">
+  <title>Samiksha Technologies</title>
+  <!-- Colours are explicit rather than currentColor: this file is loaded via
+       <img>, where currentColor would fall back to black and vanish against the
+       site's dark header. -->
+  <g transform="translate(2 4)">
+    <rect x="6" y="10" width="34" height="34" rx="9" fill="#3A82F6" opacity="0.28"/>
+    <rect x="2" y="4" width="34" height="34" rx="9" fill="#3A82F6"/>
+    <circle cx="19" cy="21" r="7.5" fill="none" stroke="#0f1012" stroke-width="3"/>
+    <circle cx="19" cy="21" r="2.2" fill="#0f1012"/>
+  </g>
+  <text x="56" y="26" font-family="Segoe UI, Inter, Helvetica Neue, Arial, sans-serif"
+        font-size="20" font-weight="700" fill="#e8e9ec" letter-spacing="0.2">Samiksha</text>
+  <text x="57" y="43" font-family="Segoe UI, Inter, Helvetica Neue, Arial, sans-serif"
+        font-size="9.5" font-weight="600" fill="#9a9ca3"
+        letter-spacing="3.1">TECHNOLOGIES</text>
+</svg>

@@ -43,3 +43,16 @@ psd-tools>=1.16,<2.0
 # core/album/slot_matcher.py to a simpler match), but agglomerative clustering
 # measurably improves person grouping, which is a headline album feature.
 scipy>=1.10,<2.0
+
+# --- Authentication & licensing ---------------------------------------------- #
+# core/auth.py talks to the production API (requests) and stores the refresh
+# token in the OS credential store (keyring). Both were already required for
+# production login/licensing to work at all, but were missing from this file --
+# a release build venv created from just `pip install -r requirements.txt`
+# would freeze without them, and ui_qt.main's licensing setup swallows the
+# resulting ModuleNotFoundError silently (by design, so a licensing bug can't
+# block startup), so the installed app would just quietly have no login/
+# licensing at all. keyring's Windows Credential Manager backend pulls in
+# pywin32-ctypes automatically on Windows; nothing extra to add here for that.
+requests>=2.31,<3.0
+keyring>=24.0,<26.0

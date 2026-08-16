@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhotoFlow Admin</title>
+
+    <!--
+        admin/index.html is the single canonical admin entry point.
+
+        This file used to be a second, independently-maintained copy of the
+        dashboard (login screen, nav, sections, modals) sharing the same
+        assets/js/admin.js and assets/css/admin.css as index.html, with
+        nothing in the repo linking to it by name. Keeping two parallel HTML
+        implementations meant every future admin.js change had to be applied
+        twice, and they had already drifted (this file's IDs did not match
+        admin.js in several places before this fix; index.html had different
+        mismatches of its own). It is retired in favor of index.html and
+        kept only as a redirect for anyone with this URL bookmarked.
+    -->
+    <meta http-equiv="refresh" content="0; url=index.html">
+    <link rel="canonical" href="index.html">
+</head>
+
+<body>
+
+    <p>
+        This page has moved. The PhotoFlow admin dashboard now lives at
+        <a href="index.html">index.html</a>.
+    </p>
+
+    <script>
+        window.location.replace("index.html");
+    </script>
+
+</body>
+
+</html>

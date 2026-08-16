@@ -1,0 +1,16 @@
+{
+  "_comment": [
+    "Update manifest read by the application's update check.",
+    "Served with no-cache (see _headers) so clients see a new release immediately.",
+    "After every release: bump `version`, set `released`, and check `url` resolves.",
+    "`version` must match utils/version.py __version__ of the build you published."
+  ],
+  "product": "PhotoFlow",
+  "version": "0.9.0",
+  "released": "2026-08-05",
+  "channel": "beta",
+  "url": "https://github.com/samikshajagne/photoflow/releases/latest/download/PhotoFlow-Setup.exe",
+  "notes_url": "https://samikshatech.com/changelog.html",
+  "minimum_supported": "0.9.0",
+  "critical": false
+}
