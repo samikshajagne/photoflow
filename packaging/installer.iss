@@ -1,6 +1,6 @@
 ; ============================================================================
 ;  PhotoFlow installer — Inno Setup script
-;  Samiksha Technologies
+;  SA Innovations
 ;
 ;  Build order:
 ;     1. python packaging/make_version_info.py
@@ -21,9 +21,13 @@
 #endif
 
 #define MyAppName "PhotoFlow"
-#define MyCompany "Samiksha Technologies"
+#define MyCompany "SA Innovations"
 #define MyAppExeName "PhotoFlow.exe"
-#define MyAppURL "https://samikshatech.com"
+; The live company site. There is no custom domain yet, so this is the Render
+; URL the website is actually served from -- AppSupportURL and AppUpdatesURL
+; below are built from it and must resolve to real pages.
+; TODO (SA Innovations domain): update once a custom domain is registered.
+#define MyAppURL "https://sa-innovations.onrender.com"
 
 [Setup]
 ; A stable AppId is what lets an upgrade replace the previous install instead of
@@ -40,6 +44,10 @@ AppSupportURL={#MyAppURL}/support.html
 AppUpdatesURL={#MyAppURL}/download.html
 VersionInfoVersion={#MyAppVersion}
 
+; Only affects NEW installs. An upgrade over an existing install reuses the
+; directory Inno recorded against AppId above, so a machine that already has
+; PhotoFlow under the previous publisher folder keeps that path and is
+; upgraded in place rather than installed twice.
 DefaultDirName={autopf}\{#MyCompany}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes

@@ -1,11 +1,16 @@
-/* Samiksha Technologies — download page enhancement.
+/* SA Innovations — PhotoFlow release box enhancement.
    The page already renders a complete, correct download box with no
-   JavaScript at all (see download.html): a real version, size and date, and a
-   working link. This script only asks the backend if there is something more
-   current to show, and if so, updates those same elements in place. Any
-   failure -- offline, CORS not yet configured, nothing published -- leaves
-   the static content exactly as it was. Same philosophy as main.js's contact
-   form: a missing backend must never be a broken page. */
+   JavaScript at all (see download.html, and the matching box on
+   photoflow.html): a real version, size and date, and a working link. This
+   script only asks the backend if there is something more current to show,
+   and if so, updates those same elements in place. Any failure -- offline,
+   CORS not yet configured, nothing published -- leaves the static content
+   exactly as it was. Same philosophy as main.js's contact form: a missing
+   backend must never be a broken page.
+
+   No version number is hardcoded here on purpose: whatever the backend
+   reports as the current release is what the page shows, so publishing a
+   release needs no website change. */
 
 (function () {
   "use strict";

@@ -161,6 +161,14 @@ handles this in `utils/paths.py`:
 | Downloaded models | `...\PhotoFlow\cache\models` |
 | Logs | `...\PhotoFlow\logs` |
 
+> **That folder name is deliberate, not stale.** The company is now SA
+> Innovations, but the data directory is pinned to the original name via
+> `utils.version.LEGACY_DATA_DIR_NAME`. It holds `license.json` (the
+> activation record) and the studio's saved collage presets, so renaming it
+> would make every existing install appear unlicensed and lose its presets,
+> silently. Changing it is a migration — copy the old directory across and
+> verify it first — never a find-and-replace.
+
 **If you add anything that saves a file, write it under
 `utils.paths.user_data_dir()`.** Saving next to the application works perfectly
 in development and then fails for every real customer — the exact bug class this

@@ -1,7 +1,7 @@
 @echo off
 REM ===========================================================================
 REM  PhotoFlow — one-command Windows build
-REM  Samiksha Technologies
+REM  SA Innovations
 REM
 REM  Usage (from the project root, in an activated virtualenv):
 REM      packaging\build.bat

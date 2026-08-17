@@ -1,4 +1,4 @@
-const API_BASE = "http://127.0.0.1:8000/api/v1";
+const API_BASE = "https://photoflow-api.onrender.com/api/v1";
 
 let accessToken = localStorage.getItem("photoflow_admin_access_token");
 

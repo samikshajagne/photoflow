@@ -8,10 +8,11 @@
   # 'unsafe-inline' for styles is only needed because a few brand colours are
   # set inline; scripts are all external files, so script-src stays clean.
   # connect-src lists the backend origin explicitly (see assets/js/download.js)
-  # instead of relaxing to '*' -- replace the placeholder host with the real
-  # backend URL when it's deployed, in both places, or the download page's
-  # fetch is blocked by the browser rather than by the backend's own CORS.
-  Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self' https://REPLACE-WITH-YOUR-BACKEND-URL.onrender.com; form-action 'self' mailto:; frame-ancestors 'none'; base-uri 'self'
+  # instead of relaxing to '*'. It must stay in step with API_BASE in
+  # assets/js/download.js -- if the two disagree, the release fetch is blocked
+  # by the browser rather than by the backend's own CORS, and the download
+  # page silently falls back to its static version number.
+  Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self' https://photoflow-api.onrender.com; form-action 'self' mailto:; frame-ancestors 'none'; base-uri 'self'
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY

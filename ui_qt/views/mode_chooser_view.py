@@ -25,6 +25,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from utils.version import COMPANY_NAME
+
 MODE_ALBUM = "album"
 MODE_PASSPORT = "passport"
 MODE_COLLAGE = "collage"
@@ -32,6 +34,9 @@ MODE_COLLAGE = "collage"
 _ACCENT = "#3A82F6"
 _ACCENT_HOVER = "#4A8EF7"
 _TEXT_DIM = "#96989E"
+# One step dimmer than _TEXT_DIM, for the company byline under the product
+# name: present and readable, but clearly subordinate to PhotoFlow itself.
+_TEXT_FAINT = "#6E7076"
 
 
 class _IconBadge(QLabel):
@@ -150,6 +155,20 @@ class ModeChooserView(QWidget):
             f"font-weight: 700; letter-spacing: 3px; color: {_ACCENT};"
         )
         outer.addWidget(brand)
+
+        # Company byline. PhotoFlow stays the primary identity here -- this
+        # line is smaller, lighter, dimmer and far less tracked than the
+        # product name directly above it, so it reads as an attribution rather
+        # than as a competing brand. Sourced from utils.version so a future
+        # company rename does not need a UI edit.
+        company = QLabel(f"A product by {COMPANY_NAME}")
+        company.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        company.setStyleSheet(
+            "background: transparent; border: none; font-size: 11px; "
+            f"font-weight: 500; letter-spacing: 0.4px; color: {_TEXT_FAINT}; "
+            "margin-top: 3px;"
+        )
+        outer.addWidget(company)
 
         title = QLabel("What would you like to do?")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)

@@ -1,4 +1,4 @@
-/* Samiksha Technologies — site behaviour.
+/* SA Innovations — site behaviour.
    Deliberately tiny and dependency-free: the mobile nav toggle, marking the
    current page in the nav, and the contact form's mailto fallback. The site
    works fine with JavaScript disabled; this only adds convenience. */

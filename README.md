@@ -7,7 +7,7 @@
 Album generation, passport/ID photo sheets and a collage maker — running entirely
 on your own computer.
 
-*by [Samiksha Technologies](https://samikshatech.com)*
+*a product by [SA Innovations](https://sa-innovations.onrender.com)*
 
 </div>
 
@@ -157,3 +157,6 @@ open-source licence. The application bundles open-source components (Qt, OpenCV,
 NumPy, Pillow, MediaPipe, SciPy, psd-tools) under their own terms.
 
 Support: `hello@samikshatech.com`
+<!-- TODO (SA Innovations domain): update this address, LICENSE and
+     utils/version.py::SUPPORT_EMAIL together once an SA Innovations
+     domain and mailbox exist. -->

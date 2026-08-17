@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="PhotoFlow">
+  <title>PhotoFlow</title>
+  <!-- PhotoFlow's product mark: the offset frames and lens that were
+       previously used as the company logo. The geometry is unchanged; only
+       its role is. It was always a camera mark rather than a company one, so
+       under the SA Innovations brand architecture it becomes the product
+       identity and the company takes its own letterform monogram
+       (see sa-mark.svg).
+
+       Kept on PhotoFlow's own accent (#3A82F6, matching the desktop app's UI
+       accent) rather than the company gradient, so the product and the
+       company read as related but clearly distinct. -->
+  <rect width="48" height="48" rx="11" fill="#0f1012"/>
+  <rect x="12" y="14" width="27" height="27" rx="7.5" fill="#3A82F6" opacity="0.3"/>
+  <rect x="8" y="8" width="27" height="27" rx="7.5" fill="#3A82F6"/>
+  <circle cx="21.5" cy="21.5" r="6" fill="none" stroke="#0f1012" stroke-width="2.6"/>
+  <circle cx="21.5" cy="21.5" r="1.8" fill="#0f1012"/>
+</svg>

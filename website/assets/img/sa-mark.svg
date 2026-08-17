@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="SA Innovations">
+  <title>SA Innovations</title>
+  <!-- The company monogram, used wherever a square mark is needed on its own
+       (favicon, app tile, avatar, GitHub profile).
+
+       A single geometric "A", flat apex, drawn as one solid form so it holds
+       together at 16px where a two letter "SA" ligature would close up into a
+       smudge. The wordmark alongside it carries the full name, so the mark
+       does not have to spell anything out.
+
+       Note for editors: XML forbids a double hyphen inside a comment, so keep
+       any dashes in this file single.
+
+       Colours are explicit rather than currentColor because this file is
+       loaded via <img>, where currentColor falls back to black and would
+       vanish against the site's dark header. -->
+  <defs>
+    <linearGradient id="sa-mark-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4a7dff"/>
+      <stop offset="0.55" stop-color="#7a6bff"/>
+      <stop offset="1" stop-color="#9b5cff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="48" height="48" rx="12" fill="url(#sa-mark-grad)"/>
+
+  <g fill="#ffffff">
+    <path d="M24 10.5 L38.5 38 L31.6 38 L24 23.2 L16.4 38 L9.5 38 Z"/>
+    <rect x="14.5" y="28.8" width="19" height="5.4"/>
+  </g>
+</svg>

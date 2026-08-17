@@ -24,7 +24,7 @@ import os
 import sys
 from pathlib import Path
 
-from utils.version import APP_NAME, COMPANY_NAME
+from utils.version import APP_NAME, LEGACY_DATA_DIR_NAME
 
 # Project root when running from source (this file is utils/paths.py).
 _SOURCE_ROOT = Path(__file__).resolve().parent.parent
@@ -64,12 +64,29 @@ def user_data_dir() -> Path:
     ``~/Library/Application Support/...``, and everything else follows the
     XDG spec (``$XDG_DATA_HOME`` or ``~/.local/share``). The directory is
     created on first use.
+
+    **The folder name is frozen and does not follow the company name.** It is
+    built from :data:`~utils.version.LEGACY_DATA_DIR_NAME`, not
+    ``COMPANY_NAME``, so that the rename to SA Innovations did not move it.
+    This directory holds ``license.json`` (the activation record),
+    ``collage_presets.json`` (the studio's saved house styles), usage counters
+    and the downloaded model cache. Renaming it would, for every existing
+    install, silently present an unlicensed application with none of its
+    presets and force a multi-hundred-megabyte model re-download -- with no
+    error message pointing at the cause.
+
+    Changing it is therefore a migration, not a rename: copy the old directory
+    across first, verify it, and only then switch the name. Until somebody
+    does that deliberately, the on-disk name stays as it is. It is invisible
+    to users in normal operation.
     """
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-        target = base / COMPANY_NAME / APP_NAME
+        target = base / LEGACY_DATA_DIR_NAME / APP_NAME
     elif sys.platform == "darwin":
-        target = Path.home() / "Library" / "Application Support" / COMPANY_NAME / APP_NAME
+        target = (
+            Path.home() / "Library" / "Application Support" / LEGACY_DATA_DIR_NAME / APP_NAME
+        )
     else:
         base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
         target = base / "samiksha-technologies" / "photoflow"

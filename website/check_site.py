@@ -86,12 +86,22 @@ for page in pages:
             if not link.startswith(("http","mailto:","#")) and not (ROOT/link).exists():
                 problems.append(f"{page.name}: nav link -> {link} missing")
 
-# Cross-page: does every page appear in the nav?
-nav = re.search(r'class="site-nav"[\s\S]*?</nav>', pages[0].read_text(encoding="utf-8")).group(0)
-linked = set(re.findall(r'href="([^"#]+\.html)"', nav))
+# Cross-page: is every page reachable from the shared chrome?
+# Nav *or* footer counts. Under the SA Innovations brand architecture the top
+# nav is company-level (Home / Products / Support / About / Contact) and a
+# product's own sub-pages hang off that product's page and the footer instead,
+# so "not in the top nav" is a layout decision rather than an orphaned page.
+# What actually matters is that no page is unreachable from every other page.
+chrome_source = pages[0].read_text(encoding="utf-8")
+chrome = "".join(
+    m.group(0)
+    for pattern in (r'class="site-nav"[\s\S]*?</nav>', r'class="site-footer"[\s\S]*?</footer>')
+    for m in re.finditer(pattern, chrome_source)
+)
+linked = set(re.findall(r'href="([^"#]+\.html)"', chrome))
 for page in pages:
     if page.name not in linked:
-        notes.append(f"{page.name} is not linked from the nav")
+        notes.append(f"{page.name} is not linked from the nav or footer")
 
 print(f"pages checked: {len(pages)}  ({', '.join(p.name for p in pages)})")
 print(f"assets: {sorted(str(p) for p in ROOT.glob('assets/**/*') if p.is_file())}")

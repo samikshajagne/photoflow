@@ -17,18 +17,50 @@ from __future__ import annotations
 __version__ = "0.9.0"
 
 APP_NAME = "PhotoFlow"
-COMPANY_NAME = "Samiksha Technologies"
-COMPANY_DOMAIN = "samikshatech.com"
-COPYRIGHT = "Copyright (c) 2026 Samiksha Technologies"
 
-# Support contact, defined once so switching mailboxes is a single edit rather
-# than a hunt through the UI. Note it also appears in LICENSE and in the
-# website's contact page, which are outside Python and must be changed there too.
+# The umbrella company. PhotoFlow is one product by SA Innovations, so the
+# product keeps its own name everywhere the user sees it and this is only used
+# for company-level branding: the About box, the Windows version resource, the
+# installer's publisher field.
+COMPANY_NAME = "SA Innovations"
+COPYRIGHT = "Copyright (c) 2026 SA Innovations"
+
+# The live company website. There is no custom domain yet, so this is the
+# Render URL the site is actually served from rather than an aspirational one.
+# TODO (SA Innovations domain): replace with the real domain once registered.
+COMPANY_WEBSITE = "https://sa-innovations.onrender.com"
+
+# ---------------------------------------------------------------------------
+# Legacy identifiers -- deliberately NOT renamed with the company.
+#
+# These two values are load-bearing rather than cosmetic, and changing them
+# silently breaks existing installs:
+#
+#   LEGACY_DATA_DIR_NAME is the folder under %LOCALAPPDATA% that holds
+#   license.json (the activation record), collage_presets.json (the studio's
+#   saved house styles), usage counters and the downloaded model cache. Rename
+#   it and every existing user looks unlicensed and loses their presets, with
+#   no error message to explain why. See utils/paths.py::user_data_dir.
+#
+#   SUPPORT_EMAIL is the mailbox that is actually monitored today. Pointing it
+#   at a domain that has not been registered would send support mail nowhere.
+#
+# TODO (SA Innovations domain): when an SA Innovations domain and mailbox
+# exist, change SUPPORT_EMAIL here, in LICENSE, and on the website's contact
+# page. LEGACY_DATA_DIR_NAME must only change alongside migration code that
+# moves the old directory across first.
+# ---------------------------------------------------------------------------
+LEGACY_DATA_DIR_NAME = "Samiksha Technologies"
 SUPPORT_EMAIL = "hello@samikshatech.com"
 
+# Shown in the licence dialog as "visit <this>", so it must be somewhere a
+# customer can actually reach.
+COMPANY_DOMAIN = "sa-innovations.onrender.com"
+
 # Where the application checks for a newer release. Served uncached (see
-# website/_headers) so a new release is visible immediately.
-UPDATE_MANIFEST_URL = f"https://{COMPANY_DOMAIN}/version.json"
+# website/_headers) so a new release is visible immediately. This points at
+# the live site, which is where version.json is deployed.
+UPDATE_MANIFEST_URL = f"{COMPANY_WEBSITE}/version.json"
 
 
 def version_tuple() -> tuple[int, int, int, int]:

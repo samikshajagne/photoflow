@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 56" role="img" aria-label="SA Innovations">
+  <title>SA Innovations</title>
+  <!-- The horizontal lockup: monogram plus wordmark, for the site header and
+       footer. See sa-mark.svg for the mark on its own.
+
+       Colours are explicit rather than currentColor: this file is loaded via
+       <img>, where currentColor would fall back to black and vanish against
+       the site's dark header. -->
+  <defs>
+    <linearGradient id="sa-logo-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4a7dff"/>
+      <stop offset="0.55" stop-color="#7a6bff"/>
+      <stop offset="1" stop-color="#9b5cff"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(2 6)">
+    <rect width="44" height="44" rx="11" fill="url(#sa-logo-grad)"/>
+    <g transform="translate(22 22) scale(0.855) translate(-24 -24)" fill="#ffffff">
+      <path d="M24 10.5 L38.5 38 L31.6 38 L24 23.2 L16.4 38 L9.5 38 Z"/>
+      <rect x="14.5" y="28.8" width="19" height="5.4"/>
+    </g>
+  </g>
+
+  <text x="58" y="27" font-family="Segoe UI, Inter, Helvetica Neue, Arial, sans-serif"
+        font-size="20" font-weight="700" fill="#e8e9ec" letter-spacing="-0.2">SA Innovations</text>
+  <!-- The descriptor is nearly twice the character count of the one it
+       replaced, so the tracking is eased back (2.6 to 2.1) and the size
+       dropped a touch to keep the lockup inside the 300-unit viewBox while
+       still reading as spaced small caps. Measured rather than guessed: the
+       wordmark above ends at x=200 and this line at x=240, both clear of the
+       300 boundary. Re-measure if the wording changes again. -->
+  <text x="59" y="44" font-family="Segoe UI, Inter, Helvetica Neue, Arial, sans-serif"
+        font-size="8.6" font-weight="600" fill="#9a9ca3"
+        letter-spacing="2.1">SOFTWARE &#8226; AI &#8226; INNOVATION</text>
+</svg>

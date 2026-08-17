@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Samiksha Technologies — website styles
+   SA Innovations — website styles
    Bold modern SaaS: gradient hero, large type, animated accents, icon grids.
    Plain CSS, no build step, no external fonts or requests.
    ========================================================================== */
@@ -428,9 +428,100 @@ textarea { min-height: 140px; resize: vertical; }
 .reveal-ready .reveal { opacity: 0; transform: translateY(22px); }
 .reveal-ready .reveal.in { opacity: 1; transform: none; transition: opacity .6s ease, transform .6s cubic-bezier(.2,.7,.3,1); }
 
+/* --------------------------------------------------------- Product cards */
+/* The company/product split: SA Innovations lists its products as large
+   cards, each one linking through to that product's own pages. Built from
+   the same surface/border/radius tokens as .card so a product card and a
+   feature card read as the same system at different scales. */
+
+.product-list { display: grid; gap: 26px; max-width: 940px; margin: 0 auto; }
+
+.product-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 34px 34px 30px;
+  transition: border-color .25s ease, transform .25s ease, box-shadow .25s ease;
+}
+.product-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--border-strong);
+  box-shadow: 0 18px 44px rgba(0,0,0,.4);
+}
+.product-card p:last-of-type { margin-bottom: 0; }
+
+.product-card-head {
+  display: flex; align-items: center; gap: 18px;
+  margin-bottom: 20px;
+}
+.product-card-head img { flex: none; border-radius: 13px; }
+.product-card-head h2,
+.product-card-head h3 { margin: 0 0 .12em; font-size: 1.55rem; letter-spacing: -0.025em; }
+
+.product-tagline { margin: 0; color: var(--text-dim); font-size: 1.02rem; }
+
+/* Small ordinal above each product card ("Product 01", "Next"). Makes the
+   page read as a portfolio with room to grow rather than as a single
+   product's landing page. */
+.product-index {
+  margin: 0 0 14px;
+  font-size: .72rem; font-weight: 700; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.product-card-next .product-index { opacity: .75; }
+
+/* Pushed to the far end of the head row, so status sits opposite the name
+   rather than crowding the tagline. */
+.product-status { margin-left: auto; flex: none; align-self: flex-start; }
+
+.product-points {
+  margin: 20px 0 0; padding-left: 0; list-style: none;
+  color: var(--text-dim); font-size: .96rem;
+  display: grid; gap: 8px;
+}
+.product-points li { position: relative; padding-left: 24px; }
+.product-points li::before {
+  content: ""; position: absolute; left: 3px; top: .62em;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); opacity: .85;
+}
+
+/* The "more coming" slot. Dashed and unfilled so it reads as a placeholder
+   for future products rather than as a product that already exists. */
+.product-card-next { background: transparent; border-style: dashed; }
+.product-card-next:hover { transform: none; box-shadow: none; }
+
+.product-next-mark {
+  flex: none; width: 56px; height: 56px; border-radius: 13px;
+  display: grid; place-items: center;
+  font-size: 26px; font-weight: 300; line-height: 1;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+}
+
+/* Parent-brand line above a product page's title: "A product by SA
+   Innovations". Small and quiet -- the product keeps top billing. */
+.product-parent {
+  display: inline-flex; align-items: center; gap: 10px;
+  margin: 0 0 18px; color: var(--text-faint); font-size: .93rem;
+}
+.product-parent a { color: var(--text-dim); }
+.product-parent a:hover { color: var(--accent-hover); }
+
+/* The product mark here is decorative: the sentence beside it already says
+   what it is, so it lives in CSS rather than as an <img> that would need
+   redundant alt text read out before the sentence itself. */
+.product-parent-mark {
+  width: 30px; height: 30px; flex: none; border-radius: 8px;
+  background: url("../img/photoflow-mark.svg") center / cover no-repeat;
+}
+
 /* ------------------------------------------------------------------ Utilities */
 .mt-0 { margin-top: 0; }
 .mt-2 { margin-top: 1.6rem; }
+.mt-3 { margin-top: 2.4rem; }
 .mb-0 { margin-bottom: 0; }
 .stack > * + * { margin-top: 1.2rem; }
 .nowrap { white-space: nowrap; }
@@ -448,6 +539,12 @@ textarea { min-height: 140px; resize: vertical; }
 @media (max-width: 760px) {
   .section { padding: 68px 0; }
   .hero { padding: 70px 0 58px; }
+  /* The desktop h1 floor (2.6rem) is too large for a phone: a long unbroken
+     product name like "SA Innovations" or "PhotoFlow" then runs right up to
+     the container padding. Lowering the floor here keeps headlines inside
+     the gutter on a 360-390px screen without touching desktop sizing. */
+  h1 { font-size: clamp(2.05rem, 8.2vw, 3rem); }
+  h2 { font-size: clamp(1.7rem, 6.4vw, 2.3rem); }
   .nav-toggle { display: block; }
   .site-nav {
     display: none; position: absolute; top: 74px; left: 0; right: 0;
@@ -460,6 +557,12 @@ textarea { min-height: 140px; resize: vertical; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .footer-grid { grid-template-columns: 1fr; }
   .dl-inner, .cta-inner { padding: 32px 22px; }
+  .product-card { padding: 26px 22px 24px; }
+  /* Stack the head so a long product name never squeezes the status badge
+     into a one-character-per-line column on a narrow phone. */
+  .product-card-head { flex-wrap: wrap; gap: 14px; }
+  .product-card-head h2, .product-card-head h3 { font-size: 1.32rem; }
+  .product-status { margin-left: 0; order: 3; }
   .brand img { width: 172px; }
   .hero-meta span + span::before { content: ""; margin: 0; }
   .hero-meta span { display: block; }
