@@ -366,7 +366,16 @@ class AutoEditor:
 
         angles: list[float] = []
         for line in lines:
-            x1, y1, x2, y2 = (float(v) for v in line[0])
+            # cv2.HoughLinesP's return shape has changed across OpenCV
+            # versions: classically (N, 1, 4) -- each line wrapped in an
+            # extra dimension -- but some builds (observed on
+            # opencv-python-headless 5.x) instead return the squeezed
+            # (N, 4) shape. Indexing `line[0]` in the squeezed case yields a
+            # single numpy.int32 coordinate rather than the (x1, y1, x2, y2)
+            # quad, and unpacking that scalar raises "TypeError: 'numpy.int32'
+            # object is not iterable". Flattening first makes this robust to
+            # either shape, on any OpenCV version.
+            x1, y1, x2, y2 = (float(v) for v in np.asarray(line).reshape(-1))
             angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
             # Fold to [-90, 90]; keep only near-horizontal lines.
             if angle > 90.0:

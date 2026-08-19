@@ -1,0 +1,9 @@
+# Normalize line endings to LF for text files regardless of OS checkout
+# settings, so the working tree doesn't flip to CRLF on Windows and create
+# whole-file diffs with no real content change (this happened across ~18
+# files before this line was added).
+* text=auto eol=lf
+
+# Windows-specific scripts should keep CRLF, since that's what cmd.exe
+# and some editors expect for .bat files.
+*.bat text eol=crlf

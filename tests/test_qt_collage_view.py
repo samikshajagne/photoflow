@@ -628,8 +628,26 @@ def test_auto_build_without_a_folder_asks_for_one(qapp, monkeypatch):
     assert shown.get("called") is True
 
 
-def test_auto_build_picks_photos_from_a_folder(qapp, tmp_path):
+def test_auto_build_picks_photos_from_a_folder(qapp, tmp_path, monkeypatch):
     import cv2
+    from PyQt6.QtWidgets import QMessageBox
+
+    # Auto-build runs the real scorer/face-detector pipeline against the temp
+    # folder below. If it ever raises, _on_auto_build's `except Exception`
+    # handler shows a QMessageBox.critical(...) dialog -- a modal
+    # QDialog.exec() that blocks forever under the offscreen platform used
+    # for headless test runs, since there's no user to dismiss it. That
+    # turns a rare failure into an indefinite pytest hang instead of a
+    # readable test failure. Mock it the same way
+    # test_auto_build_reports_a_bad_folder mocks QMessageBox.warning, so any
+    # future failure here shows up fast as an assertion with the error
+    # message attached.
+    crashed = {}
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        lambda *a, **k: crashed.setdefault("message", a[2] if len(a) > 2 else k.get("text")),
+    )
 
     folder = tmp_path / "shoot"
     folder.mkdir()
@@ -645,6 +663,7 @@ def test_auto_build_picks_photos_from_a_folder(qapp, tmp_path):
     view.auto_count.setValue(4)
     view._on_auto_build()
 
+    assert not crashed, f"auto-build raised unexpectedly: {crashed.get('message')}"
     assert len(view._items) == 4
     assert view.photo_list.count() == 4
     assert view._rendered is not None or view._preview_timer.isActive()

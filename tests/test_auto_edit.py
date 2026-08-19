@@ -103,6 +103,71 @@ def test_mid_image_exposure_moves_toward_target(tmp_path: Path):
 
 
 # --------------------------------------------------------------------------- #
+# Straighten (Hough-line tilt estimate)
+# --------------------------------------------------------------------------- #
+def test_straighten_handles_squeezed_hough_lines_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Regression test for a real crash: ``cv2.HoughLinesP`` classically returns
+    lines as shape ``(N, 1, 4)`` (each line wrapped in an extra dimension),
+    but some OpenCV builds (observed on opencv-python-headless 5.x) instead
+    return the squeezed ``(N, 4)`` shape. Code that indexes ``line[0]``
+    assuming the classic shape gets a single ``numpy.int32`` coordinate in
+    the squeezed case instead of the ``(x1, y1, x2, y2)`` quad, and
+    unpacking that scalar raises ``TypeError: 'numpy.int32' object is not
+    iterable`` -- this was hit in the Passport Photos workflow whenever
+    "Enhance faces" (brightness/color auto-correct) analyzed a photo with
+    real edges, on an environment with the squeezed-shape OpenCV build.
+
+    ``_straighten_degrees`` must produce a result without raising regardless
+    of which shape the installed OpenCV returns.
+    """
+    path = _flat(tmp_path / "gray.png", 128, 128, 128, size=128)
+
+    def fake_hough_lines_p(*args, **kwargs):
+        # Simulate the squeezed (N, 4) shape: one line, no middle dimension.
+        return np.array([[10, 100, 110, 96]], dtype=np.int32)
+
+    monkeypatch.setattr(cv2, "HoughLinesP", fake_hough_lines_p)
+
+    recipe = AutoEditor().analyze(path)  # must not raise
+    assert isinstance(recipe.straighten_deg, float)
+    assert -3.0 <= recipe.straighten_deg <= 3.0
+
+
+def test_straighten_matches_between_classic_and_squeezed_hough_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same line data in both shapes must yield the same straighten result."""
+    path = _flat(tmp_path / "gray.png", 128, 128, 128, size=128)
+    flat_line = [10, 100, 110, 96]
+
+    monkeypatch.setattr(
+        cv2, "HoughLinesP",
+        lambda *a, **k: np.array([flat_line], dtype=np.int32),
+    )
+    squeezed_recipe = AutoEditor().analyze(path)
+
+    monkeypatch.setattr(
+        cv2, "HoughLinesP",
+        lambda *a, **k: np.array([[flat_line]], dtype=np.int32),
+    )
+    classic_recipe = AutoEditor().analyze(path)
+
+    assert squeezed_recipe.straighten_deg == pytest.approx(
+        classic_recipe.straighten_deg
+    )
+
+
+def test_straighten_no_lines_returns_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _flat(tmp_path / "gray.png", 128, 128, 128, size=128)
+    monkeypatch.setattr(cv2, "HoughLinesP", lambda *a, **k: None)
+    recipe = AutoEditor().analyze(path)
+    assert recipe.straighten_deg == 0.0
+
+
+# --------------------------------------------------------------------------- #
 # Crop (face-aware)
 # --------------------------------------------------------------------------- #
 def _contains(crop, box) -> bool:
