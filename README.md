@@ -2,7 +2,7 @@
 
 # PhotoFlow
 
-**Three studio jobs. One desktop app.**
+**Three studio jobs. One desktop app.** 
 
 Album generation, passport/ID photo sheets and a collage maker — running entirely
 on your own computer.
